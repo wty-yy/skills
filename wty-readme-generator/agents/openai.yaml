@@ -1,0 +1,4 @@
+interface:
+  display_name: "WTY README Generator"
+  short_description: "Generate concise bilingual project READMEs"
+  default_prompt: "Use $wty-readme-generator to create or align README.md and README.zh-CN.md in my concise bilingual style."

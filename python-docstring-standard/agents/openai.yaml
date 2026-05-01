@@ -1,0 +1,4 @@
+interface:
+  display_name: "Python Docstring Standard"
+  short_description: "Apply team function-docstring formatting for Python code."
+  default_prompt: "Apply this skill to add or normalize function docstrings in Python files."
