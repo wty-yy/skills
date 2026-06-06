@@ -1,0 +1,4 @@
+interface:
+  display_name: "Writing A Project Proposal"
+  short_description: "中文项目申报材料写作与格式改写"
+  default_prompt: "Use $writing-a-project-proposal to rewrite my Chinese project proposal text into the target template style and output only the final Chinese result."

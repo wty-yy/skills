@@ -33,4 +33,5 @@ Each skill is packaged as a directory with a `SKILL.md` file that defines when t
 Current custom skills in this repository:
 
 - `python-docstring-standard`: standardizes Python docstrings to a consistent team format.
+- `writing-a-project-proposal`: writes and rewrites Chinese project proposal materials in a formal proposal style.
 - `wty-readme-generator`: generates or rewrites README files in a concise documentation style.
