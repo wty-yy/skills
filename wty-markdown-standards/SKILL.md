@@ -1,9 +1,9 @@
 ---
-name: wty-readme-generator
-description: Generate, rewrite, or normalize project README and concise changelog files in the user's concise Chinese documentation style, and keep matching English README output in sync. Use this skill whenever the user asks to write a new README, refactor existing project documentation, align README or changelog tone and structure, add or repair bilingual README files, or convert scattered usage notes into the user's preferred README format with bilingual cross-links and compact commented command examples.
+name: wty-markdown-standards
+description: Write and normalize concise Markdown documentation and changelogs in the user's preferred style, keep bilingual README files synchronized when requested, and apply the user's commit, rebase, and push conventions when requested.
 ---
 
-# WTY README Generator
+# WTY Markdown Standards
 
 ## Output Style
 
@@ -32,7 +32,7 @@ Rules:
 - Use a flat numbered list under each version; avoid nested bullets and long subsections.
 - Record the change directly: affected component + action + necessary parameter or interface. Omit rationale unless it changes how the result should be used.
 - Keep each item to one compact sentence or line when possible. Group only tightly coupled edits.
-- Use imperative technical wording, such as `Add ...`, `Change ...`, `Remove ...`, `Update ...`; Chinese entries should use `新增`、`修改`、`移除`、`更新`、`统一`等动词开头。
+- Use concise English imperative wording by default, such as `Add ...`, `Change ...`, `Remove ...`, `Update ...`; use Chinese changelog entries only when explicitly requested.
 - Keep code identifiers and values inline with backticks, including task IDs, function names, paths, ranges, dimensions, and units.
 - Do not turn a changelog entry into a design document: avoid equations, implementation walkthroughs, test narratives, and repeated explanations of the same interface.
 - Mention validation only as a short result when it is release-relevant, for example `GPU smoke test passed` or `通过定向测试`.
@@ -45,6 +45,23 @@ When converting a verbose change description into this format, retain only:
 3. The parameter, interface, compatibility, or behavior needed to identify the change.
 
 Drop motivation, alternatives, chronology, and low-level implementation details unless the user explicitly asks for them.
+
+## Markdown and Git Workflow
+
+Apply these rules when the user asks to normalize changelogs and commit the current changes:
+
+- Write all `CHANGELOG` entries in English unless the user explicitly requests another language.
+- Sort version headings by semantic version in descending order; use the date only as secondary context.
+- Use one heading per version. If several changes share a version, merge them under the same heading and continue the numbered list instead of creating duplicate headings.
+- Keep the newest version at the top, followed by older versions; keep each entry as one compact technical sentence.
+- Preserve identifiers, parameters, paths, dimensions, numeric values, and units in backticks where appropriate.
+- Before committing, inspect `git status`, the current branch, the remote, and recent history; include the current intended changes without overwriting unrelated user edits.
+- Use commit messages in the format `<version>; <short action>`, for example `v1.1.post5; update target tracking commands and changelogs`.
+- Before pushing, fetch or otherwise inspect the current `origin/<branch>` and rebase the local commit onto the latest remote branch.
+- Resolve rebase conflicts by preserving both the remote changes and the local requested changes; re-check version ordering and duplicate headings after conflict resolution.
+- Run `git diff --check` and relevant syntax or focused tests before pushing. Confirm the working tree and branch tracking state afterward.
+- Use a normal push when history is unchanged. If the requested rebase rewrites a commit already pushed to the same branch, use `git push --force-with-lease`, never an unconditional `--force`.
+- If a push is blocked only because the local Git LFS hook cannot run, report it and bypass the hook with `--no-verify` only after confirming that the commit does not add or modify LFS assets.
 
 ## Content Selection
 

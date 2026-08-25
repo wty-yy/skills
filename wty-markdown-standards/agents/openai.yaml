@@ -1,0 +1,4 @@
+interface:
+  display_name: "WTY Markdown Standards"
+  short_description: "Write concise Markdown and changelogs"
+  default_prompt: "Use $wty-markdown-standards to write or align concise Markdown documentation and changelogs."
