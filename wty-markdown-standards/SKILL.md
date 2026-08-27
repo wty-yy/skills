@@ -28,7 +28,7 @@ Use this style when the source or target is a `CHANGELOG`, release note, commit 
 
 Rules:
 
-- Put versions in descending order, with one simple heading per version, for example `## v6 - 2026-08-16`.
+- Put versions in descending semantic-version order: the newest version must be at the top and older versions must follow, with one simple heading per version, for example `## v6 - 2026-08-16`.
 - Use a flat numbered list under each version; avoid nested bullets and long subsections.
 - Record the change directly: affected component + action + necessary parameter or interface. Omit rationale unless it changes how the result should be used.
 - Keep each item to one compact sentence or line when possible. Group only tightly coupled edits.
@@ -51,12 +51,13 @@ Drop motivation, alternatives, chronology, and low-level implementation details 
 Apply these rules when the user asks to normalize changelogs and commit the current changes:
 
 - Write all `CHANGELOG` entries in English unless the user explicitly requests another language.
-- Sort version headings by semantic version in descending order; use the date only as secondary context.
+- Sort version headings by semantic version in descending order; put the newest version first and use the date only as secondary context.
 - Use one heading per version. If several changes share a version, merge them under the same heading and continue the numbered list instead of creating duplicate headings.
 - Keep the newest version at the top, followed by older versions; keep each entry as one compact technical sentence.
 - Preserve identifiers, parameters, paths, dimensions, numeric values, and units in backticks where appropriate.
 - Before committing, inspect `git status`, the current branch, the remote, and recent history; include the current intended changes without overwriting unrelated user edits.
-- Use commit messages in the format `<version>; <short action>`, for example `v1.1.post5; update target tracking commands and changelogs`.
+- If the commit defines a version, use only `v<version>` as the commit message, optionally followed by a component or task version with `+`, for example `v1.1`, `v1.1+climb1.1`, or `v1.1+climb1.2`.
+- Do not append action descriptions, semicolons, or colons to a versioned commit message; use the `+<component><version>` suffix for task-level minor versions such as `climb1.1` and `climb1.2`.
 - Before pushing, fetch or otherwise inspect the current `origin/<branch>` and rebase the local commit onto the latest remote branch.
 - Resolve rebase conflicts by preserving both the remote changes and the local requested changes; re-check version ordering and duplicate headings after conflict resolution.
 - Run `git diff --check` and relevant syntax or focused tests before pushing. Confirm the working tree and branch tracking state afterward.
