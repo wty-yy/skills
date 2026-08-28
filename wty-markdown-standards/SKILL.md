@@ -88,6 +88,16 @@ When generating README files for this user:
 - Translate meaning, not wording literally; preserve the concise tone
 - If the user asks for Chinese-only or English-only output, follow that scope and skip the missing language
 
+## Centered Bilingual README Header
+
+For a new public or project-facing bilingual README, use the [centered bilingual header template](references/centered-bilingual-readme-header.md) when the title style is unspecified or the user asks to restyle it.
+
+- Keep YAML frontmatter before the centered HTML header.
+- Include the project title, one compact repository summary, and links to both README languages.
+- Emphasize the current language with `<strong>` and render the other language as a link.
+- Keep the title, summary, links, and language order equivalent in `README.md` and `README.zh-CN.md`.
+- Preserve an established title style unless the user requests this header format.
+
 ## Workflow
 
 1. Inspect the current README files and the surrounding scripts or package files
@@ -109,6 +119,7 @@ When generating README files for this user:
      - usage commands
      - implementation or operational details
      - compact extra notes
+9. For a new or restyled centered bilingual title, read [references/centered-bilingual-readme-header.md](references/centered-bilingual-readme-header.md) and replace every placeholder.
 
 ## Structure Guidance
 
