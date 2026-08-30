@@ -32,6 +32,7 @@ Rules:
 - Use a flat numbered list under each version; avoid nested bullets and long subsections.
 - Record the change directly: affected component + action + necessary parameter or interface. Omit rationale unless it changes how the result should be used.
 - Keep each item to one compact sentence or line when possible. Group only tightly coupled edits.
+- For numbered changelog entries, do not append a terminal period; use internal punctuation only when needed for readability.
 - Use concise English imperative wording by default, such as `Add ...`, `Change ...`, `Remove ...`, `Update ...`; use Chinese changelog entries only when explicitly requested.
 - Keep code identifiers and values inline with backticks, including task IDs, function names, paths, ranges, dimensions, and units.
 - Do not turn a changelog entry into a design document: avoid equations, implementation walkthroughs, test narratives, and repeated explanations of the same interface.
