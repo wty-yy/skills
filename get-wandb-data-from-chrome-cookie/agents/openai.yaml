@@ -1,0 +1,4 @@
+interface:
+  display_name: "Get W&B Data From Chrome Cookie"
+  short_description: "Download wandb.ai run data with Chrome cookies instead of an API key."
+  default_prompt: "Apply this skill to download a wandb.ai run (files, history, system metrics, artifacts) using the local Chrome login session."
