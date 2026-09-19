@@ -36,3 +36,4 @@ Current custom skills in this repository:
 - `writing-a-project-proposal`: writes and rewrites Chinese project proposal materials in a formal proposal style.
 - `wty-readme-generator`: generates or rewrites README files in a concise documentation style.
 - `get-wandb-data-from-chrome-cookie`: downloads wandb.ai run data (metadata, files, full history, artifacts) with the local Chrome login session.
+- `youtube-download`: downloads YouTube audio/video with quality selection and bilingual English + Simplified Chinese subtitles, using browser cookies.

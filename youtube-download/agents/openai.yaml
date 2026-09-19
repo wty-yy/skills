@@ -1,0 +1,4 @@
+interface:
+  display_name: "YouTube Download"
+  short_description: "Download YouTube audio/video with quality selection and bilingual subtitles."
+  default_prompt: "Apply this skill to download a YouTube URL. Ask me first whether I want audio or video and which quality, then save audio to audios/ and video to videos/ (default mkv with bilingual English + Simplified Chinese subtitles)."

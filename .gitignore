@@ -1,6 +1,10 @@
 .system
 *.zip
 
+# Python artifacts
+__pycache__/
+*.pyc
+
 # Some non-customized skills
 code-simplifier
 make-poster
