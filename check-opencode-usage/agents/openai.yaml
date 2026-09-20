@@ -1,0 +1,4 @@
+interface:
+  display_name: "Check OpenCode Usage"
+  short_description: "Query opencode.ai usage/cost and Go quota with Chrome cookies, and publish the HTML dashboard."
+  default_prompt: "Apply this skill to check my opencode.ai usage for the last few days, or to regenerate and publish the usage dashboard."
