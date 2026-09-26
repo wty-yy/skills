@@ -1,0 +1,12 @@
+{
+  "host": "www.yuketang.cn",
+  "university_id": 2938,
+  "platform_id": 3,
+  "xtbz": "ykt",
+  "classroom_ids": [],
+  "chrome_profile": "auto",
+  "request_interval": 0.6,
+  "heartbeat_interval": 5,
+  "max_rounds": 2,
+  "max_video_seconds": 14400
+}
