@@ -26,7 +26,7 @@ import opencode_usage as ou
 
 CHARTJS_URL = "https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
 CF_API = "https://api.cloudflare.com/client/v4/accounts"
-TOKEN_FIELDS = ("inputTokens", "outputTokens", "reasoningTokens", "cacheReadTokens")
+TOKEN_FIELDS = ("inputTokens", "outputTokens", "cacheReadTokens")
 GO_TOKEN_PRICES = {
     "deepseek-v4.1-flash": [("闲时", 0.15, 0.60, 0.003), ("峰时", 0.30, 1.20, 0.006)],
     "deepseek-v4-pro": [("闲时", 0.66, 1.98, 0.022), ("峰时", 1.32, 3.96, 0.044)],
@@ -71,23 +71,6 @@ def load_chartjs() -> str:
             return response.read().decode()
     except Exception:  # noqa: BLE001
         return ""
-
-
-def group_of(name: str) -> str:
-    return "wt" if name.endswith("wt") else "yy"
-
-
-def normalize_key_name(name: str) -> str:
-    return name.split(" - ")[-1] if " - " in name else name
-
-
-def load_history(path: Path) -> dict:
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
 
 
 def kv_put(url: str, body: bytes, content_type: str, token: str) -> None:
@@ -157,139 +140,141 @@ def total_tokens(stats: dict) -> int:
     return sum(stats.get(field) or 0 for field in TOKEN_FIELDS)
 
 
+def normalize_key_name(name: str) -> str:
+    return name.split(" - ")[-1] if " - " in name else name
+
+
+def load_history(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
 def build_data(args) -> dict:
     profile = Path(args.profile).expanduser() if args.profile else None
-    headers = ou.api_headers(args.workspace, profile)
-    workspace = args.workspace
+    headers = ou.auth_header_sets(args.workspace, profile)
 
     today = datetime.now().astimezone().date()
     cutoff = today - timedelta(days=args.days - 1)
     dates = [cutoff + timedelta(days=offset) for offset in range(args.days)]
 
-    history = load_history(Path(args.history)) if args.history else {}
-    history_days = {day["date"]: day for day in history.get("days", [])}
-
+    daily, model_stats = ou.aggregate_usage(
+        ou.fetch_usage(args.days, headers), cutoff, today
+    )
     key_names = ou.fetch_key_names(headers)
-    records, complete = ou.fetch_records(cutoff, args.max_pages, headers)
 
-    daily_usage: dict[str, dict[str, dict]] = {}
-    key_stats: dict[str, dict] = {}
-    model_stats: dict[str, dict] = {}
-    for record in records:
-        day = ou.parse_time(record["createdAt"]).astimezone().date().isoformat()
-        if day not in {d.isoformat() for d in dates}:
-            continue
-        key_id = record.get("serviceApiKeyId")
-        name = key_names.get(key_id, {}).get("displayName", key_id or "unknown")
-        group = group_of(name)
-        cost = int(record.get("costMicroCents") or 0) / ou.COST_SCALE
-        bucket = daily_usage.setdefault(
-            day,
-            {"wt": empty_stats() | {"cost": 0.0}, "yy": empty_stats() | {"cost": 0.0}},
-        )[group]
-        for stats in (
-            bucket,
-            key_stats.setdefault(key_id, empty_stats() | {"cost": 0.0}),
-            model_stats.setdefault(record["model"], empty_stats() | {"cost": 0.0}),
-        ):
-            stats["requests"] += 1
-            for field in TOKEN_FIELDS:
-                stats[field] += record.get(field) or 0
-            stats["cost"] += cost
+    history = load_history(Path(__file__).parent / "history.json")
+    history_days = {entry["date"]: entry for entry in history.get("days", [])}
+    cache_days = ou.load_key_cache().get("days", {})
+
+    def empty_group() -> dict:
+        return {
+            "requests": 0,
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "reasoningTokens": 0,
+            "cacheReadTokens": 0,
+            "tokens": 0,
+            "cost": 0.0,
+        }
+
+    def day_groups(iso: str):
+        cache_entry = cache_days.get(iso)
+        if cache_entry and cache_entry.get("keys"):
+            groups: dict[str, dict] = {}
+            for key_id, stats in cache_entry["keys"].items():
+                name = key_names.get(key_id, {}).get("displayName", key_id)
+                bucket = groups.setdefault(ou.group_of(name), empty_group())
+                bucket["requests"] += stats.get("requests") or 0
+                for field in (
+                    "inputTokens",
+                    "outputTokens",
+                    "reasoningTokens",
+                    "cacheReadTokens",
+                ):
+                    bucket[field] += stats.get(field) or 0
+                bucket["tokens"] = (
+                    bucket["inputTokens"]
+                    + bucket["outputTokens"]
+                    + bucket["reasoningTokens"]
+                    + bucket["cacheReadTokens"]
+                )
+                bucket["cost"] += stats.get("cost") or 0.0
+            if groups:
+                return {
+                    group: groups.get(group, empty_group()) for group in ("wt", "yy")
+                }
+        entry = history_days.get(iso)
+        if entry and entry.get("groups"):
+            return {
+                group: {
+                    **(entry["groups"].get(group) or {}),
+                    "inputTokens": None,
+                    "cacheReadTokens": None,
+                }
+                for group in ("wt", "yy")
+            }
+        return None
 
     days = []
     for day in dates:
         iso = day.isoformat()
-        entry = {"date": iso, "groups": {}}
-        for group in ("wt", "yy"):
-            stats = daily_usage.get(iso, {}).get(group, empty_stats() | {"cost": 0.0})
-            entry["groups"][group] = {
-                **stats,
-                "tokens": total_tokens(stats),
-                "cost": round(stats["cost"], 6),
-            }
-        entry["total"] = {
-            "requests": entry["groups"]["wt"]["requests"]
-            + entry["groups"]["yy"]["requests"],
-            "tokens": entry["groups"]["wt"]["tokens"] + entry["groups"]["yy"]["tokens"],
-            "cost": round(
-                entry["groups"]["wt"]["cost"] + entry["groups"]["yy"]["cost"], 6
-            ),
-        }
-        if not entry["total"]["requests"] and iso in history_days:
-            entry = {**history_days[iso], "backfilled": True}
-        days.append(entry)
-
-    totals = {"wt": empty_stats() | {"cost": 0.0}, "yy": empty_stats() | {"cost": 0.0}}
-    for entry in days:
-        for group in ("wt", "yy"):
-            stats = entry["groups"][group]
-            for field in TOKEN_FIELDS:
-                totals[group][field] += stats.get(field) or 0
-            totals[group]["requests"] += stats.get("requests") or 0
-            totals[group]["cost"] += stats.get("cost") or 0.0
-    for group in ("wt", "yy"):
-        totals[group]["tokens"] = total_tokens(totals[group])
-        totals[group]["cost"] = round(totals[group]["cost"], 6)
-    totals["all"] = {
-        "requests": totals["wt"]["requests"] + totals["yy"]["requests"],
-        "tokens": totals["wt"]["tokens"] + totals["yy"]["tokens"],
-        "cost": round(totals["wt"]["cost"] + totals["yy"]["cost"], 6),
-        **{field: totals["wt"][field] + totals["yy"][field] for field in TOKEN_FIELDS},
-    }
-
-    keys = []
-    for key_id, stats in key_stats.items():
-        info = key_names.get(key_id, {})
-        name = info.get("displayName", key_id)
-        if info.get("deleted"):
-            name += "（已删除）"
-        keys.append(
+        stats = daily.get(iso, empty_stats() | {"cost": 0.0})
+        groups = day_groups(iso)
+        if groups:
+            split_tokens = groups["wt"]["tokens"] + groups["yy"]["tokens"]
+            split_cost = groups["wt"]["cost"] + groups["yy"]["cost"]
+            if split_tokens:
+                groups["wt"]["tokens"] = round(
+                    groups["wt"]["tokens"] * total_tokens(stats) / split_tokens
+                )
+                groups["yy"]["tokens"] = total_tokens(stats) - groups["wt"]["tokens"]
+            if split_cost:
+                groups["wt"]["cost"] = round(
+                    groups["wt"]["cost"] * stats["cost"] / split_cost, 6
+                )
+                groups["yy"]["cost"] = round(stats["cost"] - groups["wt"]["cost"], 6)
+            split_requests = (groups["wt"].get("requests") or 0) + (
+                groups["yy"].get("requests") or 0
+            )
+            if split_requests:
+                groups["wt"]["requests"] = round(
+                    groups["wt"]["requests"] * stats["requests"] / split_requests
+                )
+            else:
+                split_tokens = groups["wt"]["tokens"] + groups["yy"]["tokens"]
+                groups["wt"]["requests"] = (
+                    round(stats["requests"] * groups["wt"]["tokens"] / split_tokens)
+                    if split_tokens
+                    else 0
+                )
+            groups["yy"]["requests"] = stats["requests"] - groups["wt"]["requests"]
+        days.append(
             {
-                "id": key_id,
-                "name": name,
-                "group": group_of(name),
+                "date": iso,
                 **stats,
                 "tokens": total_tokens(stats),
                 "cost": round(stats["cost"], 6),
+                "groups": groups,
             }
         )
-    keys.sort(key=lambda entry: (-entry["cost"], entry["name"]))
-    keys_by_name = {normalize_key_name(entry["name"]): entry for entry in keys}
-    for old in history.get("keys", []):
-        name = normalize_key_name(old["name"])
-        entry = keys_by_name.get(name)
-        if entry is None:
-            entry = {
-                "id": old.get("id"),
-                "name": name,
-                "group": group_of(name),
-                **empty_stats(),
-                "tokens": 0,
-                "cost": 0.0,
-            }
-            keys.append(entry)
-            keys_by_name[name] = entry
-        entry["requests"] += old.get("requests") or 0
+
+    totals = empty_stats() | {"cost": 0.0}
+    for entry in days:
         for field in TOKEN_FIELDS:
-            entry[field] += old.get(field) or 0
-        entry["tokens"] = total_tokens(entry)
-        entry["cost"] = round(entry["cost"] + (old.get("cost") or 0.0), 6)
-    keys.sort(key=lambda entry: (-entry["cost"], entry["name"]))
+            totals[field] += entry[field]
+        totals["requests"] += entry["requests"]
+        totals["cost"] += entry["cost"]
+    totals["tokens"] = total_tokens(totals)
+    totals["cost"] = round(totals["cost"], 6)
 
     models = [
         {"model": model, "cost": round(stats["cost"], 6)}
         for model, stats in sorted(model_stats.items(), key=lambda kv: -kv[1]["cost"])
     ]
-    models_by_name = {entry["model"]: entry for entry in models}
-    for old in history.get("models", []):
-        entry = models_by_name.get(old["model"])
-        if entry is None:
-            entry = {"model": old["model"], "cost": 0.0}
-            models.append(entry)
-            models_by_name[old["model"]] = entry
-        entry["cost"] = round(entry["cost"] + (old.get("cost") or 0.0), 6)
-    models.sort(key=lambda entry: -entry["cost"])
 
     price_rows = []
     for entry in models:
@@ -316,19 +301,47 @@ def build_data(args) -> dict:
                 }
             )
 
-    quota = ou.fetch_quota(headers)
+    key_stats, keys_fetched_at, keys_days = ou.fetch_key_stats(cutoff, today, headers)
+    keys = []
+    for key_id, stats in key_stats.items():
+        info = key_names.get(key_id, {})
+        name = info.get("displayName", key_id)
+        if info.get("deleted"):
+            name += "（已删除）"
+        keys.append(
+            {
+                "id": key_id,
+                "name": name,
+                "group": ou.group_of(name),
+                **stats,
+                "tokens": ou.total_tokens(stats),
+                "cost": round(stats["cost"], 6),
+            }
+        )
+    history_key_costs = {
+        normalize_key_name(old_key["name"]): old_key.get("cost") or 0.0
+        for old_key in history.get("keys", [])
+    }
+    for entry in keys:
+        entry["cost"] = round(
+            entry["cost"]
+            + history_key_costs.get(normalize_key_name(entry["name"]), 0.0),
+            6,
+        )
+    keys.sort(key=lambda entry: (-entry["cost"], entry["name"]))
 
     return {
         "generatedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "workspace": workspace,
+        "workspace": args.workspace,
         "range": [dates[0].isoformat(), dates[-1].isoformat()],
-        "complete": complete,
         "days": days,
         "totals": totals,
         "keys": keys,
+        "keysFetchedAt": keys_fetched_at,
+        "keysDays": keys_days,
         "models": models,
         "priceRows": price_rows,
-        "quota": quota,
+        "quota": ou.fetch_quota(headers),
     }
 
 
@@ -412,18 +425,22 @@ try {
   <section class="panel">
     <h2>每日明细</h2>
     <table id="dailyTable"></table>
-    <div class="footnote">* 为旧接口（2026-09-22 迁移前）快照回填（9/21 为快照时刻的部分数据）；9/22 起为新 Console API 数据。</div>
-  </section>
-
-  <section class="grid2">
-    <div class="panel"><h2>按 API 密钥</h2><table id="keyTable"></table></div>
-    <div class="panel"><h2>按模型费用（计费口径）</h2><table id="modelTable"></table></div>
+    <div class="footnote">每日/模型数据来自 Console v2 用量导出（天 × 模型，覆盖 90 天）；按密钥明细来自请求日志（保留 30 天、9/22 起有记录）。</div>
   </section>
 
   <section class="panel">
-    <h2>模型 Token 价格（每 100M tokens）</h2>
-    <table id="priceTable"></table>
-    <div class="footnote">价格来自 OpenCode Go 官方文档；DeepSeek 系列分闲时/峰时两档（峰时为 UTC 周一至周五 01:00-04:00、06:00-10:00）。</div>
+    <h2>按 API 密钥</h2>
+    <table id="keyTable"></table>
+    <div class="footnote" id="keyNote">按密钥数据来自请求日志（保留 30 天），按天缓存、增量刷新。</div>
+  </section>
+
+  <section class="grid2">
+    <div class="panel"><h2>按模型费用</h2><table id="modelTable"></table></div>
+    <div class="panel">
+      <h2>模型 Token 价格（每 100M tokens）</h2>
+      <table id="priceTable"></table>
+      <div class="footnote">价格来自 OpenCode Go 官方文档；DeepSeek 系列分闲时/峰时两档（峰时为 UTC 周一至周五 01:00-04:00、06:00-10:00）。</div>
+    </div>
   </section>
 
   <footer id="footer"></footer>
@@ -443,12 +460,26 @@ const fmtTokens = v => {
 };
 const fmtUSD = v => "$" + (v || 0).toFixed(4);
 const fmtQuotaUSD = v => "$" + ((v || 0) / 1e8).toFixed(2);
+const GROUP_LABEL = { wt: "wt", yy: "yy（其他密钥）" };
+const groupSum = (group, field) =>
+  DATA.days.reduce((s, d) => s + (d.groups ? d.groups[group][field] || 0 : 0), 0);
+const groupHit = group => {
+  let input = 0, cache = 0;
+  for (const d of DATA.days) {
+    const g = d.groups && d.groups[group];
+    if (g && g.inputTokens !== null && g.inputTokens !== undefined) {
+      input += g.inputTokens;
+      cache += g.cacheReadTokens || 0;
+    }
+  }
+  const denom = input + cache;
+  return denom ? ((cache / denom) * 100).toFixed(1) + "%" : "—";
+};
+
 const cacheHit = s => {
   const denom = (s.cacheReadTokens || 0) + (s.inputTokens || 0);
   return denom ? ((s.cacheReadTokens || 0) / denom * 100).toFixed(1) + "%" : "—";
 };
-const GROUP_LABEL = { wt: "wt", yy: "yy（其他密钥）" };
-const GROUP_COLOR = { wt: "#4f8cff", yy: "#f5a54a" };
 
 function countdown(targetIso) {
   const ms = new Date(targetIso).getTime() - Date.now();
@@ -472,7 +503,7 @@ function renderMeta() {
     "工作区 " + DATA.workspace + " · " + DATA.range[0] + " ~ " + DATA.range[1] +
     " · 生成于 " + DATA.generatedAt.replace("T", " ").slice(0, 19);
   document.getElementById("footer").textContent =
-    DATA.complete ? "数据完整（usage.list 全部分页已拉取）" : "提示：usage.list 分页达到上限，Token 汇总可能不完整（费用数据不受影响）";
+    "数据来源：OpenCode Console v2 用量导出（天 × 模型）；按密钥明细已停用。";
 }
 
 function renderCards() {
@@ -480,20 +511,36 @@ function renderCards() {
   const t = DATA.totals;
   const monthly = DATA.quota.windows.month;
   const items = [
-    { label: "总费用（全部密钥）", value: fmtUSD(t.all.cost), sub: "wt " + fmtUSD(t.wt.cost) + " · yy " + fmtUSD(t.yy.cost) },
+    {
+      label: "总费用",
+      value: fmtUSD(t.cost),
+      sub: "wt " + fmtUSD(groupSum("wt", "cost")) + " · yy " + fmtUSD(groupSum("yy", "cost")),
+    },
     {
       label: "Go 月额度剩余",
       value: monthly ? fmtQuotaUSD(monthly.limit - monthly.usage) : "—",
       sub: monthly ? "已用 " + monthly.percent + "% · 总额度 " + fmtQuotaUSD(monthly.limit) : "未订阅或不可用",
     },
-    { label: "总 Token（全部）", value: fmtTokens(t.all.tokens), sub: fmtInt(t.all.tokens) + " · wt " + fmtTokens(t.wt.tokens) + " / yy " + fmtTokens(t.yy.tokens) },
     {
-      label: "缓存命中率（全部）",
-      value: cacheHit(t.all),
-      sub: "wt " + cacheHit(t.wt) + " · yy " + cacheHit(t.yy) + " · 缓存读取 ÷（输入 + 缓存读取）",
+      label: "总 Token",
+      value: fmtTokens(t.tokens),
+      sub: "wt " + fmtTokens(groupSum("wt", "tokens")) + " · yy " + fmtTokens(groupSum("yy", "tokens")),
     },
-    { label: "总请求数", value: fmtInt(t.all.requests), sub: "wt " + fmtInt(t.wt.requests) + " · yy " + fmtInt(t.yy.requests) },
-    { label: "日均费用", value: fmtUSD(t.all.cost / DATA.days.length), sub: "统计 " + DATA.days.length + " 天" },
+    {
+      label: "缓存命中率",
+      value: cacheHit(t),
+      sub: "wt " + groupHit("wt") + " · yy " + groupHit("yy") + "（9/22 起）",
+    },
+    {
+      label: "总请求数",
+      value: fmtInt(t.requests),
+      sub: "wt " + fmtInt(groupSum("wt", "requests")) + " · yy " + fmtInt(groupSum("yy", "requests")),
+    },
+    {
+      label: "日均费用",
+      value: fmtUSD(t.cost / DATA.days.length),
+      sub: "wt " + fmtUSD(groupSum("wt", "cost") / DATA.days.length) + " · yy " + fmtUSD(groupSum("yy", "cost") / DATA.days.length),
+    },
   ];
   for (const item of items) {
     cards.append(el("div", "card",
@@ -563,10 +610,10 @@ function renderCharts() {
     type: "bar",
     data: {
       labels,
-      datasets: ["wt", "yy"].map(group => ({
+      datasets: ["wt", "yy"].map((group, i) => ({
         label: GROUP_LABEL[group],
-        data: DATA.days.map(d => d.groups[group].cost),
-        backgroundColor: GROUP_COLOR[group],
+        data: DATA.days.map(day => day.groups ? day.groups[group].cost : 0),
+        backgroundColor: i ? "#f5a54a" : "#4f8cff",
         borderRadius: 4,
       })),
     },
@@ -576,10 +623,10 @@ function renderCharts() {
     type: "bar",
     data: {
       labels,
-      datasets: ["wt", "yy"].map(group => ({
+      datasets: ["wt", "yy"].map((group, i) => ({
         label: GROUP_LABEL[group],
-        data: DATA.days.map(d => d.groups[group].tokens),
-        backgroundColor: GROUP_COLOR[group],
+        data: DATA.days.map(day => day.groups ? day.groups[group].tokens : 0),
+        backgroundColor: i ? "#f5a54a" : "#4f8cff",
         borderRadius: 4,
       })),
     },
@@ -604,48 +651,54 @@ function table(containerId, headers, rows) {
 
 function renderTables() {
   table("dailyTable",
-    ["日期", "wt Tokens", "yy Tokens", "合计 Tokens", "wt 费用", "yy 费用", "合计费用", "请求数"],
-    DATA.days.slice().reverse().filter(d => d.total.requests || d.total.tokens || d.total.cost).map(d => [
-      d.date + (d.backfilled ? " *" : ""),
-      fmtInt(d.groups.wt.tokens),
-      fmtInt(d.groups.yy.tokens),
-      "<strong>" + fmtInt(d.total.tokens) + "</strong>",
-      fmtUSD(d.groups.wt.cost),
-      fmtUSD(d.groups.yy.cost),
-      "<strong>" + fmtUSD(d.total.cost) + "</strong>",
-      fmtInt(d.total.requests),
+    ["日期", "请求数", "wt Tokens", "yy Tokens", "合计 Tokens", "wt 费用", "yy 费用", "合计费用"],
+    DATA.days.slice().reverse().filter(d => d.requests || d.tokens || d.cost).map(d => [
+      d.date,
+      fmtInt(d.requests),
+      d.groups ? fmtInt(d.groups.wt.tokens) : "—",
+      d.groups ? fmtInt(d.groups.yy.tokens) : "—",
+      "<strong>" + fmtInt(d.tokens) + "</strong>",
+      d.groups ? fmtUSD(d.groups.wt.cost) : "—",
+      d.groups ? fmtUSD(d.groups.yy.cost) : "—",
+      "<strong>" + fmtUSD(d.cost) + "</strong>",
     ]).concat([[
       "<strong>合计</strong>",
-      "<strong>" + fmtInt(DATA.totals.wt.tokens) + "</strong>",
-      "<strong>" + fmtInt(DATA.totals.yy.tokens) + "</strong>",
-      "<strong>" + fmtInt(DATA.totals.all.tokens) + "</strong>",
-      "<strong>" + fmtUSD(DATA.totals.wt.cost) + "</strong>",
-      "<strong>" + fmtUSD(DATA.totals.yy.cost) + "</strong>",
-      "<strong>" + fmtUSD(DATA.totals.all.cost) + "</strong>",
-      "<strong>" + fmtInt(DATA.totals.all.requests) + "</strong>",
+      "<strong>" + fmtInt(DATA.totals.requests) + "</strong>",
+      "<strong>" + fmtInt(groupSum("wt", "tokens")) + "</strong>",
+      "<strong>" + fmtInt(groupSum("yy", "tokens")) + "</strong>",
+      "<strong>" + fmtInt(DATA.totals.tokens) + "</strong>",
+      "<strong>" + fmtUSD(groupSum("wt", "cost")) + "</strong>",
+      "<strong>" + fmtUSD(groupSum("yy", "cost")) + "</strong>",
+      "<strong>" + fmtUSD(DATA.totals.cost) + "</strong>",
     ]]));
 
-  table("keyTable",
-    ["密钥", "分组", "请求数", "输入", "输出", "推理", "缓存读取", "缓存命中率", "合计 Tokens", "费用"],
-    DATA.keys.map(k => [
-      k.name + '<span class="tag ' + k.group + '">' + GROUP_LABEL[k.group] + "</span>",
-      k.group,
-      fmtInt(k.requests),
-      fmtInt(k.inputTokens),
-      fmtInt(k.outputTokens),
-      fmtInt(k.reasoningTokens),
-      fmtInt(k.cacheReadTokens),
-      cacheHit(k),
-      fmtInt(k.tokens),
-      fmtUSD(k.cost),
-    ]));
+  if (DATA.keys && DATA.keys.length) {
+    table("keyTable",
+      ["密钥", "分组", "请求数", "输入", "输出", "缓存读取", "合计 Tokens", "费用(USD)"],
+      DATA.keys.map(k => [
+        k.name + '<span class="tag ' + k.group + '">' + k.group + "</span>",
+        k.group,
+        fmtInt(k.requests),
+        fmtInt(k.inputTokens),
+        fmtInt(k.outputTokens),
+        fmtInt(k.cacheReadTokens),
+        fmtInt(k.tokens),
+        fmtUSD(k.cost),
+      ]));
+    if (DATA.keysFetchedAt) {
+      document.getElementById("keyNote").textContent =
+        "按密钥：费用覆盖 9/13 起（早期间为报告快照汇总），请求数/Token 自 9/22 起（请求日志，覆盖 " + DATA.keysDays + " 天）；按天缓存增量刷新，缓存时间 " + DATA.keysFetchedAt.replace("T", " ").slice(0, 19) + "。";
+    }
+  } else {
+    document.getElementById("keyTable").outerHTML = '<div class="footnote">按密钥数据暂不可用（请求日志缓存为空，稍后重试）。</div>';
+  }
 
   table("modelTable",
     ["模型", "费用", "占比"],
     DATA.models.map(m => [
       m.model,
       fmtUSD(m.cost),
-      DATA.totals.all.cost ? ((m.cost / DATA.totals.all.cost) * 100).toFixed(1) + "%" : "0%",
+      DATA.totals.cost ? ((m.cost / DATA.totals.cost) * 100).toFixed(1) + "%" : "0%",
     ]));
 
   const fmtPrice = v => v === null ? "—" : "$" + v.toFixed(2);
@@ -695,11 +748,6 @@ def main() -> None:
     )
     parser.add_argument(
         "--out", default=str(Path(__file__).parent / "usage_report.html")
-    )
-    parser.add_argument(
-        "--history",
-        default=str(Path(__file__).parent / "history.json"),
-        help="pre-migration backfill data (JSON)",
     )
     parser.add_argument(
         "--push",

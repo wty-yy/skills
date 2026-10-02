@@ -7,13 +7,16 @@
 
 Examples:
     uv run opencode_usage.py                  # last 7 days
-    uv run opencode_usage.py --days 3
+    uv run opencode_usage.py --days 30
     uv run opencode_usage.py --by-model
+    uv run opencode_usage.py --by-key
     uv run opencode_usage.py --json > usage.json
 """
 
 import argparse
+import csv
 import hashlib
+import io
 import json
 import os
 import random
@@ -38,6 +41,8 @@ CHROME_ROOT = Path(
     os.environ.get("CHROME_CONFIG_DIR", "~/.config/google-chrome")
 ).expanduser()
 TOKEN_FIELDS = ("inputTokens", "outputTokens", "reasoningTokens", "cacheReadTokens")
+KEY_CACHE = Path(__file__).parent / "key_cache.json"
+KEY_FETCH_BUDGET = 4
 
 
 def get_keyring_secret() -> bytes:
@@ -102,71 +107,79 @@ def load_cookies(secret: bytes, profile: Path | None = None) -> dict[str, str]:
     return cookies
 
 
-def api_headers(workspace: str, profile: Path | None = None) -> dict[str, str]:
+def auth_header_sets(
+    workspace: str, profile: Path | None = None
+) -> list[dict[str, str]]:
+    sets: list[dict[str, str]] = []
     key = os.environ.get("OPENCODE_API_KEY", "")
     if key:
-        return {"Authorization": f"Bearer {key}"}
-    cookies = load_cookies(get_keyring_secret(), profile)
-    cookie = "; ".join(f"{name}={value}" for name, value in cookies.items())
-    return {"Cookie": cookie, "x-org-id": workspace}
+        sets.append({"Authorization": f"Bearer {key}"})
+    try:
+        cookies = load_cookies(get_keyring_secret(), profile)
+        cookie = "; ".join(f"{name}={value}" for name, value in cookies.items())
+        sets.append({"Cookie": cookie, "x-org-id": workspace})
+    except RuntimeError:
+        pass
+    if not sets:
+        raise RuntimeError("no OPENCODE_API_KEY and no Chrome console session")
+    return sets
 
 
 def call_api(
-    path: str, params: dict | None = None, headers: dict | None = None
-) -> dict | list:
+    path: str,
+    params: dict | None = None,
+    header_sets: list[dict] | None = None,
+    raw: bool = False,
+) -> str:
     query = f"?{urllib.parse.urlencode(params)}" if params else ""
     url = f"{API_BASE}{path}{query}"
-    request_headers = {
-        "Accept": "application/json",
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Chrome/140.0.0.0 Safari/537.36",
-        "Origin": "https://opencode.ai",
-        "Referer": "https://opencode.ai/console/",
-        **(headers or {}),
-    }
+    header_sets = header_sets or [{}]
     last_error: Exception | None = None
-    for attempt in range(4):
-        if attempt:
-            time.sleep(0.5 * 2**attempt + random.random())
-        try:
-            request = urllib.request.Request(url, headers=request_headers)
-            with urllib.request.urlopen(request, timeout=60) as response:
-                return json.loads(response.read())
-        except urllib.error.HTTPError as exc:
-            detail = exc.read()[:300].decode("utf-8", "replace")
-            if exc.code < 500 and exc.code != 429:
-                raise RuntimeError(f"HTTP {exc.code}: {detail}") from exc
-            last_error = exc
-        except (urllib.error.URLError, ConnectionError, TimeoutError) as exc:
-            last_error = exc
+    for index, headers in enumerate(header_sets):
+        for attempt in range(4):
+            if attempt:
+                time.sleep(0.5 * 2**attempt + random.random())
+            request_headers = {
+                "Accept": "text/csv" if raw else "application/json",
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Chrome/140.0.0.0 Safari/537.36",
+                "Origin": "https://opencode.ai",
+                "Referer": "https://opencode.ai/console/",
+                **headers,
+            }
+            try:
+                request = urllib.request.Request(url, headers=request_headers)
+                with urllib.request.urlopen(request, timeout=90) as response:
+                    body = response.read().decode("utf-8", "replace")
+                return body if raw else json.loads(body)
+            except urllib.error.HTTPError as exc:
+                detail = exc.read()[:200].decode("utf-8", "replace")
+                if exc.code in (401, 403) and index + 1 < len(header_sets):
+                    break
+                if exc.code < 500 and exc.code != 429:
+                    raise RuntimeError(f"HTTP {exc.code} on {path}: {detail}") from exc
+                last_error = exc
+            except (urllib.error.URLError, ConnectionError, TimeoutError) as exc:
+                last_error = exc
     raise RuntimeError(f"request failed after retries: {last_error}")
 
 
-def parse_time(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+def usage_range(days: int) -> str:
+    if days <= 7:
+        return "7d"
+    if days <= 30:
+        return "30d"
+    return "90d"
 
 
-def fetch_records(cutoff: date, max_pages: int, headers: dict) -> tuple[list, bool]:
-    since = (cutoff - timedelta(days=1)).isoformat() + "T00:00:00Z"
-    records: list = []
-    cursor: str | None = None
-    for _ in range(max_pages):
-        params: dict = {"since": since, "pageSize": PAGE_SIZE}
-        if cursor:
-            params["cursor"] = cursor
-        data = call_api("/usage/rows", params, headers)
-        items = data.get("items", []) if isinstance(data, dict) else []
-        records.extend(items)
-        cursor = data.get("nextCursor") if isinstance(data, dict) else None
-        if not items or not cursor:
-            return records, True
-        oldest = min(parse_time(item["createdAt"]) for item in items)
-        if oldest.astimezone().date() < cutoff:
-            return records, True
-    return records, False
+def fetch_usage(days: int, header_sets: list[dict]) -> list[dict]:
+    body = call_api(
+        "/v2/usage/export", {"range": usage_range(days)}, header_sets, raw=True
+    )
+    return list(csv.DictReader(io.StringIO(body)))
 
 
-def fetch_key_names(headers: dict) -> dict[str, dict]:
-    data = call_api("/service-accounts", {"page": 1, "pageSize": 100}, headers)
+def fetch_key_names(header_sets: list[dict]) -> dict[str, dict]:
+    data = call_api("/service-accounts", {"page": 1, "pageSize": 100}, header_sets)
     names: dict[str, dict] = {}
     items = data.get("items", []) if isinstance(data, dict) else []
     for item in items:
@@ -178,8 +191,8 @@ def fetch_key_names(headers: dict) -> dict[str, dict]:
     return names
 
 
-def fetch_quota(headers: dict) -> dict:
-    data = call_api("/go/status", None, headers)
+def fetch_quota(header_sets: list[dict]) -> dict:
+    data = call_api("/go/status", None, header_sets)
     access = data.get("access") or {}
     meters = access.get("meters") or {}
     windows = {}
@@ -213,16 +226,118 @@ def fetch_quota(headers: dict) -> dict:
     }
 
 
-def group_of(name: str) -> str:
-    return "wt" if name.endswith("wt") else "yy"
-
-
 def empty_stats() -> dict:
     return {"requests": 0, **dict.fromkeys(TOKEN_FIELDS, 0)}
 
 
 def total_tokens(stats: dict) -> int:
     return sum(stats.get(field) or 0 for field in TOKEN_FIELDS)
+
+
+def aggregate_usage(rows: list[dict], cutoff: date, today: date) -> tuple[dict, dict]:
+    daily: dict[str, dict] = {}
+    models: dict[str, dict] = {}
+    for row in rows:
+        day = row["day"]
+        if not (cutoff.isoformat() <= day <= today.isoformat()):
+            continue
+        cost = int(row["cost_micro_cents"] or 0) / COST_SCALE
+        for stats in (
+            daily.setdefault(day, empty_stats() | {"cost": 0.0}),
+            models.setdefault(row["model"], empty_stats() | {"cost": 0.0}),
+        ):
+            stats["requests"] += int(row["requests"] or 0)
+            stats["inputTokens"] += int(row["input_tokens"] or 0)
+            stats["outputTokens"] += int(row["output_tokens"] or 0)
+            stats["cacheReadTokens"] += int(row["cache_read_tokens"] or 0)
+            stats["cost"] += cost
+    return daily, models
+
+
+def load_key_cache() -> dict:
+    try:
+        return json.loads(KEY_CACHE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"days": {}}
+
+
+def save_key_cache(cache: dict) -> None:
+    KEY_CACHE.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+
+
+def fetch_day_keys(day: str, header_sets: list[dict]) -> dict[str, dict]:
+    cursor: str | None = None
+    stats: dict[str, dict] = {}
+    for _ in range(50):
+        params: dict = {"day": day, "category": "inference", "limit": PAGE_SIZE}
+        if cursor:
+            params["cursor"] = cursor
+        data = call_api("/request-logs", params, header_sets)
+        items = data.get("items", []) if isinstance(data, dict) else []
+        for item in items:
+            key_id = item.get("serviceAPIKeyID") or "unknown"
+            bucket = stats.setdefault(key_id, empty_stats() | {"cost": 0.0})
+            bucket["requests"] += 1
+            for field in TOKEN_FIELDS:
+                bucket[field] += item.get(field) or 0
+            bucket["cost"] += item.get("cost") or 0.0
+        cursor = data.get("nextCursor") if isinstance(data, dict) else None
+        if not items or not cursor:
+            break
+    return stats
+
+
+def fetch_key_stats(
+    cutoff: date, today: date, header_sets: list[dict], budget: int = KEY_FETCH_BUDGET
+) -> tuple[dict, str | None]:
+    cache = load_key_cache()
+    days_cache = cache.setdefault("days", {})
+    days = [
+        date.fromordinal(o) for o in range(cutoff.toordinal(), today.toordinal() + 1)
+    ]
+    fetched = 0
+    for day in reversed(days):
+        iso = day.isoformat()
+        is_today = iso == today.isoformat()
+        entry = days_cache.get(iso)
+        if entry and not is_today:
+            continue
+        if fetched >= budget:
+            break
+        try:
+            stats = fetch_day_keys(iso, header_sets)
+        except RuntimeError:
+            break
+        days_cache[iso] = {
+            "fetchedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "keys": stats,
+        }
+        fetched += 1
+    for iso in list(days_cache):
+        if iso < cutoff.isoformat():
+            del days_cache[iso]
+    save_key_cache(cache)
+
+    key_stats: dict[str, dict] = {}
+    fetched_at: str | None = None
+    days_count = 0
+    for iso, entry in days_cache.items():
+        if not (cutoff.isoformat() <= iso <= today.isoformat()):
+            continue
+        fetched_at = max(fetched_at or "", entry.get("fetchedAt") or "") or None
+        if entry.get("keys"):
+            days_count += 1
+        for key_id, stats in entry.get("keys", {}).items():
+            agg = key_stats.setdefault(key_id, empty_stats() | {"cost": 0.0})
+            agg["requests"] += stats.get("requests") or 0
+            for field in TOKEN_FIELDS:
+                agg[field] += stats.get(field) or 0
+            agg["cost"] += stats.get("cost") or 0.0
+    return key_stats, fetched_at, days_count
+
+
+def group_of(name: str) -> str:
+    return "wt" if name.endswith("wt") else "yy"
 
 
 def display_width(text: str) -> int:
@@ -236,76 +351,49 @@ def pad(text: str, width: int, right: bool = False) -> str:
 
 def build_summary(args) -> dict:
     profile = Path(args.profile).expanduser() if args.profile else None
-    headers = api_headers(args.workspace, profile)
+    header_sets = auth_header_sets(args.workspace, profile)
     today = datetime.now().astimezone().date()
     cutoff = today - timedelta(days=args.days - 1)
     dates = [cutoff + timedelta(days=offset) for offset in range(args.days)]
 
-    key_names = fetch_key_names(headers)
-    records, complete = fetch_records(cutoff, args.max_pages, headers)
-
-    daily: dict[str, dict] = {}
-    key_stats: dict[str, dict] = {}
-    model_stats: dict[str, dict] = {}
-    for record in records:
-        day = parse_time(record["createdAt"]).astimezone().date()
-        if not (cutoff <= day <= today):
-            continue
-        name = key_names.get(record.get("serviceApiKeyId"), {}).get(
-            "displayName", record.get("serviceApiKeyId") or "unknown"
-        )
-        cost = int(record.get("costMicroCents") or 0) / COST_SCALE
-        bucket = daily.setdefault(
-            day.isoformat(),
-            {"wt": empty_stats() | {"cost": 0.0}, "yy": empty_stats() | {"cost": 0.0}},
-        )[group_of(name)]
-        for stats in (
-            bucket,
-            key_stats.setdefault(
-                record.get("serviceApiKeyId"), empty_stats() | {"cost": 0.0}
-            ),
-            model_stats.setdefault(record["model"], empty_stats() | {"cost": 0.0}),
-        ):
-            stats["requests"] += 1
-            for field in TOKEN_FIELDS:
-                stats[field] += record.get(field) or 0
-            stats["cost"] += cost
+    daily, model_stats = aggregate_usage(
+        fetch_usage(args.days, header_sets), cutoff, today
+    )
 
     days = []
-    totals = {"wt": empty_stats() | {"cost": 0.0}, "yy": empty_stats() | {"cost": 0.0}}
     for day in dates:
         iso = day.isoformat()
-        entry = {"date": iso, "groups": {}}
-        for group in ("wt", "yy"):
-            stats = daily.get(iso, {}).get(group, empty_stats() | {"cost": 0.0})
-            entry["groups"][group] = {
+        stats = daily.get(iso, empty_stats() | {"cost": 0.0})
+        days.append(
+            {
+                "date": iso,
                 **stats,
                 "tokens": total_tokens(stats),
                 "cost": round(stats["cost"], 6),
             }
-            for field in TOKEN_FIELDS:
-                totals[group][field] += stats[field]
-            totals[group]["requests"] += stats["requests"]
-            totals[group]["cost"] += stats["cost"]
-        entry["total"] = {
-            "requests": entry["groups"]["wt"]["requests"]
-            + entry["groups"]["yy"]["requests"],
-            "tokens": entry["groups"]["wt"]["tokens"] + entry["groups"]["yy"]["tokens"],
-            "cost": round(
-                entry["groups"]["wt"]["cost"] + entry["groups"]["yy"]["cost"], 6
-            ),
-        }
-        days.append(entry)
-    for group in ("wt", "yy"):
-        totals[group]["tokens"] = total_tokens(totals[group])
-        totals[group]["cost"] = round(totals[group]["cost"], 6)
-    totals["all"] = {
-        "requests": totals["wt"]["requests"] + totals["yy"]["requests"],
-        "tokens": totals["wt"]["tokens"] + totals["yy"]["tokens"],
-        "cost": round(totals["wt"]["cost"] + totals["yy"]["cost"], 6),
-        **{field: totals["wt"][field] + totals["yy"][field] for field in TOKEN_FIELDS},
-    }
+        )
 
+    totals = empty_stats() | {"cost": 0.0}
+    for entry in days:
+        for field in TOKEN_FIELDS:
+            totals[field] += entry[field]
+        totals["requests"] += entry["requests"]
+        totals["cost"] += entry["cost"]
+    totals["tokens"] = total_tokens(totals)
+    totals["cost"] = round(totals["cost"], 6)
+
+    models = [
+        {
+            "model": model,
+            "cost": round(stats["cost"], 6),
+            "tokens": total_tokens(stats),
+            "requests": stats["requests"],
+        }
+        for model, stats in sorted(model_stats.items(), key=lambda kv: -kv[1]["cost"])
+    ]
+
+    key_stats, keys_fetched_at, _keys_days = fetch_key_stats(cutoff, today, header_sets)
+    key_names = fetch_key_names(header_sets)
     keys = []
     for key_id, stats in key_stats.items():
         info = key_names.get(key_id, {})
@@ -324,26 +412,16 @@ def build_summary(args) -> dict:
         )
     keys.sort(key=lambda entry: (-entry["cost"], entry["name"]))
 
-    models = [
-        {
-            "model": model,
-            "cost": round(stats["cost"], 6),
-            "tokens": total_tokens(stats),
-            "requests": stats["requests"],
-        }
-        for model, stats in sorted(model_stats.items(), key=lambda kv: -kv[1]["cost"])
-    ]
-
     return {
         "generatedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
         "workspace": args.workspace,
         "range": [dates[0].isoformat(), dates[-1].isoformat()],
-        "complete": complete,
         "days": days,
         "totals": totals,
         "keys": keys,
+        "keysFetchedAt": keys_fetched_at,
         "models": models,
-        "quota": fetch_quota(headers),
+        "quota": fetch_quota(header_sets),
     }
 
 
@@ -353,8 +431,8 @@ def print_table(summary: dict, by_model: bool, by_key: bool) -> None:
         ("请求数", True),
         ("输入", True),
         ("输出", True),
-        ("推理", True),
         ("缓存读取", True),
+        ("合计 Tokens", True),
         ("费用(USD)", True),
     ]
     align = [a for _, a in headers]
@@ -368,21 +446,20 @@ def print_table(summary: dict, by_model: bool, by_key: bool) -> None:
     print(row([h for h, _ in headers]))
     print("-" * (sum(widths) + 2 * (len(widths) - 1)))
     for day in summary["days"]:
-        stats = day["groups"]
         print(
             row(
                 [
                     day["date"],
-                    day["total"]["requests"],
-                    f"{stats['wt']['inputTokens'] + stats['yy']['inputTokens']:,}",
-                    f"{stats['wt']['outputTokens'] + stats['yy']['outputTokens']:,}",
-                    f"{stats['wt']['reasoningTokens'] + stats['yy']['reasoningTokens']:,}",
-                    f"{stats['wt']['cacheReadTokens'] + stats['yy']['cacheReadTokens']:,}",
-                    f"${day['total']['cost']:.4f}",
+                    day["requests"],
+                    f"{day['inputTokens']:,}",
+                    f"{day['outputTokens']:,}",
+                    f"{day['cacheReadTokens']:,}",
+                    f"{day['tokens']:,}",
+                    f"${day['cost']:.4f}",
                 ]
             )
         )
-    total = summary["totals"]["all"]
+    total = summary["totals"]
     print("-" * (sum(widths) + 2 * (len(widths) - 1)))
     print(
         row(
@@ -391,70 +468,67 @@ def print_table(summary: dict, by_model: bool, by_key: bool) -> None:
                 total["requests"],
                 f"{total['inputTokens']:,}",
                 f"{total['outputTokens']:,}",
-                f"{total['reasoningTokens']:,}",
                 f"{total['cacheReadTokens']:,}",
+                f"{total['tokens']:,}",
                 f"${total['cost']:.4f}",
             ]
         )
     )
-    if not summary["complete"]:
-        print(
-            "\n提示: 记录数过多，tokens 汇总不完整（提高 --max-pages 可拉取更多）",
-            file=sys.stderr,
-        )
     if by_model and summary["models"]:
         print("\n按模型费用:")
         for entry in summary["models"]:
             print(f"  {pad(entry['model'], 34)} ${entry['cost']:.4f}")
-    if by_key and summary["keys"]:
-        key_headers = [
-            ("密钥", False),
-            ("请求数", True),
-            ("输入", True),
-            ("输出", True),
-            ("费用(USD)", True),
-        ]
-        key_align = [a for _, a in key_headers]
-        key_widths = [max(display_width(h), 12) for h, _ in key_headers]
-        key_widths[0] = max(
-            key_widths[0], *(display_width(e["name"]) for e in summary["keys"])
-        )
-
-        def key_row(values):
-            cells = [
-                pad(str(v), w, a) for v, w, a in zip(values, key_widths, key_align)
+    if by_key:
+        if not summary["keys"]:
+            print("\n按密钥费用: 暂不可用（请求日志缓存为空）", file=sys.stderr)
+        else:
+            key_headers = [
+                ("密钥", False),
+                ("分组", False),
+                ("请求数", True),
+                ("输入", True),
+                ("输出", True),
+                ("费用(USD)", True),
             ]
-            return "  ".join(cells)
-
-        print("\n按密钥费用:")
-        print(key_row([h for h, _ in key_headers]))
-        print("-" * (sum(key_widths) + 2 * (len(key_widths) - 1)))
-        for entry in summary["keys"]:
-            print(
-                key_row(
-                    [
-                        entry["name"],
-                        entry["requests"],
-                        f"{entry['inputTokens']:,}",
-                        f"{entry['outputTokens']:,}",
-                        f"${entry['cost']:.4f}",
-                    ]
-                )
+            key_align = [a for _, a in key_headers]
+            key_widths = [max(display_width(h), 12) for h, _ in key_headers]
+            key_widths[0] = max(
+                key_widths[0], *(display_width(e["name"]) for e in summary["keys"])
             )
+
+            def key_row(values):
+                cells = [
+                    pad(str(v), w, a) for v, w, a in zip(values, key_widths, key_align)
+                ]
+                return "  ".join(cells)
+
+            print(f"\n按密钥费用（缓存于 {summary.get('keysFetchedAt') or '—'}）:")
+            print(key_row([h for h, _ in key_headers]))
+            print("-" * (sum(key_widths) + 2 * (len(key_widths) - 1)))
+            for entry in summary["keys"]:
+                print(
+                    key_row(
+                        [
+                            entry["name"],
+                            entry["group"],
+                            entry["requests"],
+                            f"{entry['inputTokens']:,}",
+                            f"{entry['outputTokens']:,}",
+                            f"${entry['cost']:.4f}",
+                        ]
+                    )
+                )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Query opencode.ai workspace usage")
     parser.add_argument(
-        "--days", type=int, default=7, help="number of days (default 7)"
+        "--days", type=int, default=7, help="number of days (default 7, max 90)"
     )
     parser.add_argument("--workspace", default=DEFAULT_WORKSPACE)
     parser.add_argument(
         "--profile",
         help="Chrome profile dir path, e.g. ~/.config/google-chrome/Default",
-    )
-    parser.add_argument(
-        "--max-pages", type=int, default=200, help="usage rows page cap"
     )
     parser.add_argument("--by-model", action="store_true", help="show cost per model")
     parser.add_argument("--by-key", action="store_true", help="show usage per API key")
