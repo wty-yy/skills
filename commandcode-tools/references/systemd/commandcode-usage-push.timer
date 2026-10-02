@@ -1,0 +1,11 @@
+[Unit]
+Description=Update Command Code usage report every 10 minutes
+
+[Timer]
+OnCalendar=*:0/10
+Persistent=true
+AccuracySec=1min
+Unit=commandcode-usage-push.service
+
+[Install]
+WantedBy=timers.target
