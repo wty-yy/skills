@@ -128,7 +128,6 @@ TEMPLATE = """<!DOCTYPE html>
   .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
   .grid2 > * { min-width:0; }
   @media (max-width:900px) { .grid2 { grid-template-columns:1fr; } .cards { grid-template-columns:repeat(2, minmax(0, 1fr)); } }
-  @media (max-width:520px) { main { padding:24px 16px 40px; } header h1 { font-size:22px; } .cards { grid-template-columns:1fr; gap:12px; } .card { padding:18px 20px; } .theme-toggle { padding:7px 10px; } .plan-badge { margin-left:0; margin-top:6px; display:table; } .quota-grid { grid-template-columns:1fr; } }
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:22px; overflow-x:auto; }
   .chart-wrap { position:relative; height:280px; }
   canvas { display:block; }
@@ -152,6 +151,7 @@ TEMPLATE = """<!DOCTYPE html>
   .tag.xfy { background:rgba(245,165,74,.16); color:var(--xfy); }
   .tag.wt { background:rgba(61,220,151,.16); color:var(--wt); }
   .mono { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  @media (max-width:520px) { main { padding:24px 16px 40px; } header h1 { font-size:22px; } .cards { grid-template-columns:1fr; gap:12px; } .card { padding:18px 20px; } .panel { padding:18px; } .theme-toggle { padding:7px 10px; } .plan-badge { margin-left:0; margin-top:6px; display:table; } .quota-grid { grid-template-columns:1fr; } .quota .nums { flex-wrap:wrap; } }
 </style>
 </head>
 <body>
@@ -187,7 +187,7 @@ try {
   <section class="panel">
     <h2>每日明细</h2>
     <table id="dailyTable"></table>
-    <div class="footnote">每日数据来自 Console 用量图表接口（UTC 日 × 模型，按天聚合）；Credits 为计入套餐额度的消耗，API 费用为原价。</div>
+    <div class="footnote" id="dailyNote"></div>
   </section>
 
   <section class="grid2">
@@ -212,7 +212,7 @@ try {
 const DATA = __DATA__;
 const CHARTJS_FALLBACK = "https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js";
 
-const fmtInt = v => (v || 0).toLocaleString("en-US");
+const fmtInt = v => v == null ? "—" : Number(v).toLocaleString("en-US");
 const fmtTokens = v => {
   v = v || 0;
   if (v >= 1e9) return (v / 1e9).toFixed(2) + "B";
@@ -221,13 +221,8 @@ const fmtTokens = v => {
   return String(v);
 };
 const fmtTokenMillions = v => (Number(v || 0) / 1e6).toLocaleString("en-US", { maximumFractionDigits: 2 }) + "M";
-const fmtUSD = v => "$" + (v || 0).toFixed(4);
+const fmtUSD = v => v == null ? "—" : "$" + Number(v).toFixed(4);
 const fmtCredits = v => (v || 0).toFixed(2);
-
-const cacheHit = s => {
-  const denom = s.tokensIn || 0;
-  return denom ? ((s.cacheRead || 0) / denom * 100).toFixed(1) + "%" : "—";
-};
 
 function countdown(targetIso) {
   if (!targetIso) return "重置时间未知";
@@ -269,12 +264,16 @@ function renderMeta() {
 
 function renderCards() {
   const cards = document.getElementById("cards");
-  const t = DATA.totals;
   const q = DATA.quota;
   const monthly = q.windows.month;
   const period = DATA.billing.summary || {};
   const credits = period.totalCredits ?? period.totalCost ?? 0;
-  const daysElapsed = Math.max(1, Math.ceil((new Date(DATA.generatedAt) - new Date(DATA.billing.periodStart)) / 86400000));
+  const daysElapsed = Math.max(1 / 86400000, (new Date(DATA.generatedAt) - new Date(DATA.billing.periodStart)) / 86400000);
+  const cacheDays = DATA.days.filter(day => day.cacheRead != null && day.tokensIn != null);
+  const cacheRead = cacheDays.reduce((total, day) => total + day.cacheRead, 0);
+  const cacheInput = cacheDays.reduce((total, day) => total + day.tokensIn, 0);
+  const cacheCoverage = cacheDays.length ? cacheDays[0].date + " ~ " + cacheDays[cacheDays.length - 1].date : "";
+  const firstDayExcluded = DATA.billing.partialStartDay && !cacheDays.some(day => day.date === DATA.range[0]);
   const items = [
     {
       label: "套餐已用 Credits",
@@ -299,13 +298,13 @@ function renderCards() {
     },
     {
       label: "缓存命中率",
-      value: cacheHit(t),
-      sub: "缓存读取 " + fmtTokens(t.cacheRead) + " · 节省 " + fmtUSD(t.cacheSavings),
+      value: cacheInput > 0 ? (cacheRead / cacheInput * 100).toFixed(1) + "%" : "—",
+      sub: cacheInput > 0 ? "缓存读取 " + fmtTokens(cacheRead) + "<br>" + cacheCoverage + "（UTC" + (firstDayExcluded ? "；首日未纳入" : "") + "）" : "当前账单尚无可用缓存明细",
     },
     {
       label: "日均 Credits",
       value: fmtCredits(credits / daysElapsed),
-      sub: "已统计 " + daysElapsed + " 天 · 日均 " + fmtInt(Math.round((period.totalCount || 0) / daysElapsed)) + " 次请求",
+      sub: "已过 " + daysElapsed.toLocaleString("en-US", { maximumFractionDigits: 2 }) + " 天 · 日均 " + fmtInt(Math.round((period.totalCount || 0) / daysElapsed)) + " 次请求",
     },
   ];
   for (const item of items) {
@@ -445,6 +444,9 @@ function table(containerId, headers, rows) {
 }
 
 function renderTables() {
+  document.getElementById("dailyNote").textContent =
+    "按 UTC 日统计，Credits 为套餐额度消耗，API 费用为原价。" +
+    (DATA.billing.partialStartDay ? "首日仅统计账单开始后的用量；首日缓存及 API 原价未提供，显示 —。" : "");
   table("dailyTable",
     ["日期", "请求数", "输入", "输出", "缓存读取", "合计 Tokens", "API 费用", "Credits"],
     DATA.days.slice().reverse().filter(d => d.requests || d.tokens || d.credits).map(d => [

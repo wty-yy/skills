@@ -38,4 +38,4 @@ Current custom skills in this repository:
 - `get-wandb-data-from-chrome-cookie`: downloads wandb.ai run data (metadata, files, full history, artifacts) with the local Chrome login session.
 - `youtube-download`: downloads YouTube audio/video with quality selection and bilingual English + Simplified Chinese subtitles, using browser cookies.
 - `check-opencode-usage`: queries opencode.ai workspace usage/cost and Go membership quota with the local Chrome login, and publishes the HTML dashboard to Cloudflare KV.
-- `commandcode-tools`: queries commandcode.ai usage/credits with the local Chrome login, publishes the HTML dashboard to Cloudflare KV, and configures the Command Code GOAT provider in opencode.
+- `commandcode-tools`: queries current-billing-period usage/credits with the local Chrome login, publishes the HTML dashboard to Cloudflare KV, and configures the Command Code GOAT provider in opencode.

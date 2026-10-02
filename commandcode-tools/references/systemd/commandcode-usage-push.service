@@ -6,5 +6,5 @@ Type=oneshot
 # Adjust WorkingDirectory to the directory that holds commandcode_usage.py and usage_report.py
 WorkingDirectory=%h/Documents/ai_search/commandcode_usage
 EnvironmentFile=%h/.config/commandcode-usage/env
-ExecStart=%h/.local/bin/uv run usage_report.py --days 14 --push
+ExecStart=%h/.local/bin/uv run usage_report.py --push
 TimeoutStartSec=600

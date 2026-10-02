@@ -1,4 +1,4 @@
 interface:
   display_name: "Command Code Tools"
-  short_description: "Query commandcode.ai usage and publish the dashboard, or add the Command Code GOAT provider to opencode."
-  default_prompt: "Apply this skill to check my Command Code usage for the last few days, regenerate and publish the dashboard, or configure the Command Code GOAT provider in opencode."
+  short_description: "Check billing usage, publish reports, or configure opencode."
+  default_prompt: "Use $commandcode-tools to check my current Command Code billing-period usage, publish the dashboard, or configure the GOAT provider in opencode."
