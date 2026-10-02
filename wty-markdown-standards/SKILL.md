@@ -24,7 +24,7 @@ description: Write and normalize concise Markdown documentation and changelogs i
 
 ## Concise Changelog Style
 
-Use this style when the source or target is a `CHANGELOG`, release note, commit summary, or version history. The goal is a compact, directly searchable version history rather than a design document.
+Use this style when the source or target is a `CHANGELOG`, release note, commit summary, or version history. Keep changelogs very short: retain only the changes and values needed to identify each version.
 
 Rules:
 
@@ -35,9 +35,10 @@ Rules:
 - For numbered changelog entries, do not append a terminal period; use internal punctuation only when needed for readability.
 - Use concise English imperative wording by default, such as `Add ...`, `Change ...`, `Remove ...`, `Update ...`; use Chinese changelog entries only when explicitly requested.
 - Keep code identifiers and values inline with backticks, including task IDs, function names, paths, ranges, dimensions, and units.
-- Do not turn a changelog entry into a design document: avoid equations, implementation walkthroughs, test narratives, and repeated explanations of the same interface.
-- Mention validation only as a short result when it is release-relevant, for example `GPU smoke test passed` or `通过定向测试`.
+- Omit equations, implementation walkthroughs, training stages or procedures, experiment outcomes, metrics, checkpoint selection, validation narratives, and repeated explanations of the same interface.
+- Keep configuration and algorithm changes brief, with only necessary values. Store detailed experiments, exploratory versions, and debugging records in separate project documentation at the location established by the user or repository.
 - Preserve the existing language and numbering convention of the target changelog. Do not introduce bilingual sections unless explicitly requested.
+- When the user explicitly requests version consolidation, retain only the requested version headings, move useful experiment history to separate project documentation, and remove redundant code for superseded versions after checking callers. Do not discard version history during ordinary changelog edits.
 
 When converting a verbose change description into this format, retain only:
 
@@ -57,8 +58,9 @@ Apply these rules when the user asks to normalize changelogs and commit the curr
 - Keep the newest version at the top, followed by older versions; keep each entry as one compact technical sentence.
 - Preserve identifiers, parameters, paths, dimensions, numeric values, and units in backticks where appropriate.
 - Before committing, inspect `git status`, the current branch, the remote, and recent history; include the current intended changes without overwriting unrelated user edits.
-- If the commit defines a version, use only `v<version>` as the commit message, optionally followed by a component or task version with `+`, for example `v1.1`, `v1.1+climb1.1`, or `v1.1+climb1.2`.
-- Do not append action descriptions, semicolons, or colons to a versioned commit message; use the `+<component><version>` suffix for task-level minor versions such as `climb1.1` and `climb1.2`.
+- If the commit defines a version, use only `v<version>` as the commit message, optionally followed by a component version with `+`, for example `v1.1` or `v1.1+component1.1`.
+- Do not append action descriptions, semicolons, or colons to a versioned commit message; use the `+<component><version>` suffix for component versions.
+- If the user explicitly requests a squash from a specified base commit, preserve that base and replace only the requested following commits with one commit using the requested version message.
 - Before pushing, fetch or otherwise inspect the current `origin/<branch>` and rebase the local commit onto the latest remote branch.
 - Resolve rebase conflicts by preserving both the remote changes and the local requested changes; re-check version ordering and duplicate headings after conflict resolution.
 - Run `git diff --check` and relevant syntax or focused tests before pushing. Confirm the working tree and branch tracking state afterward.
@@ -67,6 +69,7 @@ Apply these rules when the user asks to normalize changelogs and commit the curr
 
 ## Content Selection
 
+- Keep skill instructions reusable across projects. Store repository-specific task names, paths, output filenames, versions, and experiment policies in repository guidelines or user-provided context.
 - Treat emphasis in the prompt as implementation guidance, not automatic README content
 - Include stable facts needed to build, run, configure, or understand the project interface
 - Omit rejected alternatives, prior behavior, correction history, and implementation negotiation

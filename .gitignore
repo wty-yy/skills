@@ -6,7 +6,6 @@ __pycache__/
 *.pyc
 
 # Some non-customized skills
-code-simplifier
 make-poster
 mem0
 mem0-cli
