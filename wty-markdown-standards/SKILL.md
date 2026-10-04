@@ -5,6 +5,11 @@ description: Write and normalize concise Markdown documentation and changelogs i
 
 # WTY Markdown Standards
 
+## Documentation Scope
+
+- Modify README files or `AGENTS.md` only when the user explicitly requests edits to those files; code changes alone do not authorize documentation updates.
+- Include algorithm and environment implementation details in README files or `AGENTS.md` only when the user explicitly requests those details.
+
 ## Output Style
 
 - Prefer short, direct wording
