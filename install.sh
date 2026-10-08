@@ -21,7 +21,8 @@ usage() {
         cat <<'EOF'
 用法：./install.sh <install|uninstall> [claude|codex|opencode|all ...] [--yes]
 
-管理脚本所在目录中带有 SKILL.md 的所有 skill。
+递归管理仓库内带有 SKILL.md 的目录，按相对父目录自动分类。
+推荐布局：<类别>/<skill>/SKILL.md；根目录下的 skill 显示为 Uncategorized。
 未指定 agent 时，默认选择全部三个 agent。
 install 打开选择界面，默认勾选已安装的本仓库 skill。
 按类别显示为树形列表，类别行可整组勾选或取消；[-] 表示部分选中。
@@ -57,7 +58,9 @@ EOF
         cat <<'EOF'
 Usage: ./install.sh <install|uninstall> [claude|codex|opencode|all ...] [--yes]
 
-Manage all skill directories containing SKILL.md next to this script.
+Recursively discover skill directories containing SKILL.md in this repository.
+Group by relative parent directory: <category>/<skill>/SKILL.md.
+Skills directly at the repository root appear under Uncategorized.
 If no agent is specified, all three agents are selected.
 Install opens a checklist with this repository's installed skills selected.
 Skills are grouped in a tree. Toggle a category to select or deselect all its
@@ -109,20 +112,49 @@ skills_dir() {
     esac
 }
 
-is_repo_link() {
+repo_link_source() {
     local destination="$1"
-    local source="$repo_root/${destination##*/}"
+    local source parent
     [[ -L "$destination" ]] || return 1
-    [[ "$(readlink -- "$destination")" == "$source" || "$destination" -ef "$source" ]]
+    source="$(readlink -- "$destination")"
+    [[ "$source" == /* ]] || source="${destination%/*}/$source"
+    parent="${source%/*}"
+    if [[ -d "$parent" ]]; then
+        source="$(cd -- "$parent" && pwd -P)/${source##*/}"
+    fi
+    # Retain ownership of broken links, including the old flat layout.
+    [[ "$source" == "$repo_root/"* && "${source##*/}" == "${destination##*/}" ]] || return 1
+    [[ "$source/" != */../* && "$source/" != */./* ]] || return 1
+    printf '%s\n' "$source"
+}
+
+is_repo_link() {
+    repo_link_source "$1" > /dev/null
 }
 
 is_source_directory() {
     [[ ! -L "$1" && "$1" -ef "$2" ]]
 }
 
+discover_skills() {
+    local directory="$1" source existing
+    for source in "$directory"/*; do
+        [[ -d "$source" && ! -L "$source" ]] || continue
+        if [[ -f "$source/SKILL.md" ]]; then
+            for existing in "${skills[@]}"; do
+                [[ "${existing##*/}" != "${source##*/}" ]] || die \
+                    'Duplicate skill name: %s and %s' 'skill 名称重复：%s 和 %s' "$existing" "$source"
+            done
+            skills+=("$source")
+        else
+            discover_skills "$source"
+        fi
+    done
+}
+
 collect_selection() {
     local target_dir="$1"
-    local source destination
+    local source destination existing found
     items=()
     selected=()
     statuses=()
@@ -147,9 +179,15 @@ collect_selection() {
 
     # Include owned links whose source skill has been removed from the checkout.
     for destination in "$target_dir"/*; do
-        is_repo_link "$destination" || continue
-        source="$repo_root/${destination##*/}"
-        [[ -d "$source" && -f "$source/SKILL.md" ]] && continue
+        source="$(repo_link_source "$destination")" || continue
+        found=false
+        for existing in "${skills[@]}"; do
+            if [[ "${existing##*/}" == "${destination##*/}" ]]; then
+                found=true
+                break
+            fi
+        done
+        [[ "$found" == false ]] || continue
         items+=("$source")
         selected+=(1)
         statuses+=(stale)
@@ -157,22 +195,28 @@ collect_selection() {
 }
 
 build_tree() {
-    local category index last_child
+    local category index last_child relative existing found
+    local categories=()
     item_categories=()
     tree_items=()
     tree_categories=()
     tree_last_children=()
 
     for index in "${!items[@]}"; do
-        case "${items[index]##*/}" in
-            code-simplifier|python-docstring-standard|writing-a-project-proposal|wty-markdown-standards)
-                item_categories[index]=Coding
-                ;;
-            *) item_categories[index]=Tools ;;
+        relative="${items[index]#"$repo_root/"}"
+        case "$relative" in
+            */*) category="${relative%/*}" ;;
+            *) category=Uncategorized ;;
         esac
+        item_categories[index]="$category"
+        found=false
+        for existing in "${categories[@]}"; do
+            [[ "$existing" != "$category" ]] || found=true
+        done
+        [[ "$found" == true ]] || categories+=("$category")
     done
 
-    for category in Coding Tools; do
+    for category in "${categories[@]}"; do
         last_child=-1
         for index in "${!items[@]}"; do
             [[ ${item_categories[index]} == "$category" ]] || continue
@@ -366,10 +410,7 @@ shopt -s nullglob
 
 skills=()
 if [[ "$action" == install ]]; then
-    for source in "$repo_root"/*; do
-        [[ -d "$source" && -f "$source/SKILL.md" ]] || continue
-        skills+=("$source")
-    done
+    discover_skills "$repo_root"
 fi
 
 for agent in "${agents[@]}"; do
@@ -419,7 +460,7 @@ for agent in "${agents[@]}"; do
                 print_message '[%s] Already present: %s\n' '[%s] 已存在：%s\n' "$agent" "$name"
                 continue
             fi
-            if is_repo_link "$destination"; then
+            if [[ -L "$destination" && "$destination" -ef "$source" ]]; then
                 print_message '[%s] Already linked: %s\n' '[%s] 已链接：%s\n' "$agent" "$name"
                 continue
             fi
