@@ -1,0 +1,6 @@
+*.db
+*.db-wal
+*.db-shm
+keys*.json
+messages*.json
+exports/

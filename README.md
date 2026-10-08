@@ -36,6 +36,7 @@ Current custom skills in this repository:
 - `writing-a-project-proposal`: writes and rewrites Chinese project proposal materials in a formal proposal style.
 - `wty-readme-generator`: generates or rewrites README files in a concise documentation style.
 - `get-wandb-data-from-chrome-cookie`: downloads wandb.ai run data (metadata, files, full history, artifacts) with the local Chrome login session.
+- `wechat_get_data`: reads scoped Linux WeChat chat records and recovers original emoji files with message MD5 verification.
 - `youtube-download`: downloads YouTube audio/video with quality selection and bilingual English + Simplified Chinese subtitles, using browser cookies.
 - `check-opencode-usage`: queries opencode.ai workspace usage/cost and Go membership quota with the local Chrome login, and publishes the HTML dashboard to Cloudflare KV.
 - `commandcode-tools`: queries current-billing-period usage/credits with the local Chrome login, publishes the HTML dashboard to Cloudflare KV, and configures the Command Code GOAT provider in opencode.
