@@ -49,13 +49,18 @@ sakana/fugu-ultra
 
 ## Configure opencode
 
-1. Set the API key in the environment used by opencode:
+1. Choose one credential source:
+
+- Saved credential: run `/connect`, choose `Other` if needed, use provider ID `commandcode`, and enter the API key. opencode stores it in `~/.local/share/opencode/auth.json`. Omit `provider.commandcode.options.apiKey` from the config.
+- Environment variable: keep the template's `"apiKey": "{env:COMMANDCODE_API_KEY}"` and export the key in the environment that launches opencode:
 
 ```bash
-export COMMANDCODE_API_KEY=<cmd_api_key>   # add to the shell profile
+export COMMANDCODE_API_KEY=<cmd_api_key>   # environment mode only
 ```
 
-2. Merge `references/commandcode_provider.json` into `~/.config/opencode/opencode.json`:
+Setting `options.apiKey` overrides the saved credential. An unset environment variable resolves to an empty string and can cause `Invalid 'Authorization' header or token.` even after entering a valid key with `/connect`. A variable exported in another terminal is not available to an already running opencode process.
+
+2. Merge `references/commandcode_provider.json` into the active opencode config (`~/.config/opencode/opencode.json` or `opencode.jsonc`). The example below uses saved credentials; set `auth_source = "env"` for environment mode. Adjust `cfg_path` to the existing config; this example uses `json.loads`, so preserve comments with a JSONC-aware editor if the file contains them.
 
 ```python
 #!/usr/bin/env python3
@@ -64,22 +69,36 @@ from pathlib import Path
 
 cfg_path = Path.home() / ".config/opencode/opencode.json"
 provider_path = Path(__file__).parent / "commandcode_provider.json"
+auth_source = "auth"  # "auth" for /connect; "env" for COMMANDCODE_API_KEY
 cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
 provider = json.loads(provider_path.read_text(encoding="utf-8"))
+if auth_source == "auth":
+    provider["options"].pop("apiKey", None)
 cfg.setdefault("provider", {})["commandcode"] = provider
 cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 print("providers:", list(cfg["provider"]))
 ```
 
-The provider uses `@ai-sdk/openai-compatible`; `claude-sonnet-5-5` overrides `provider.npm` to `@ai-sdk/anthropic` because it only serves `/messages`. The API key uses opencode `{env:COMMANDCODE_API_KEY}` substitution, so no secret is stored in the config.
+The provider uses `@ai-sdk/openai-compatible`; `claude-sonnet-5-5` overrides `provider.npm` to `@ai-sdk/anthropic` because it only serves `/messages`. Both credential modes keep the key out of the config file. When merging the template again, keep the selected credential mode so its environment reference does not overwrite saved authentication.
 
-3. Verify and smoke-test:
+3. Restart opencode after changing the config or launch environment, then verify and smoke-test:
 
 ```bash
 opencode models commandcode | wc -l   # 62
 opencode run --model commandcode/deepseek/deepseek-v4.1-flash --variant off "Reply with exactly: ok"
 opencode run --model commandcode/claude-sonnet-5-5 --variant max --thinking "What is 17*23?"
 ```
+
+## Troubleshoot provider authentication
+
+For `Invalid 'Authorization' header or token.` / HTTP 401 on `/provider/v1/*`:
+
+- Check the active config's `provider.commandcode.options.apiKey` and confirm the saved credential uses provider ID `commandcode`. Inspect only presence and format; never print keys or dump `auth.json`.
+- If using `/connect`, remove `options.apiKey` entirely. Setting it to an empty string still overrides the saved key.
+- If using the environment reference, check `test -n "$COMMANDCODE_API_KEY"` in the terminal that will launch opencode, then restart it from that terminal. Paste only the key when connecting, without a `Bearer ` prefix or surrounding whitespace.
+- Retry the small `/chat/completions` smoke test above. `opencode models commandcode` checks model configuration, and the public `/provider/v1/models` endpoint does not verify the key. If the saved key works in a direct authenticated request but opencode fails, inspect config overrides and restart the process; if the key also fails directly, verify or replace it at https://commandcode.ai/settings/keys.
+
+Provider authentication uses API keys; the Chrome cookie / re-login fix for `/internal/*` does not apply here. See [opencode credentials](https://opencode.ai/docs/providers/#credentials) and [environment substitution](https://opencode.ai/docs/config/#env-vars).
 
 ## Model Table
 

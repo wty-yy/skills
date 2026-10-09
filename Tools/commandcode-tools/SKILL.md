@@ -38,10 +38,13 @@ Both scripts use the current subscription's `currentPeriodStart/End`; there is n
 
 ### opencode provider
 
+Choose one credential source: use `/connect` with provider ID `commandcode` and omit `provider.commandcode.options.apiKey`, or use the template's environment-variable reference and export the key before starting opencode. An unset environment reference can override a valid saved credential and cause HTTP 401.
+
 ```bash
-export COMMANDCODE_API_KEY=<cmd_api_key>   # create at https://commandcode.ai/settings/keys
+export COMMANDCODE_API_KEY=<cmd_api_key>   # environment mode only; create at https://commandcode.ai/settings/keys
 
 # merge references/commandcode_provider.json into ~/.config/opencode/opencode.json
+# remove options.apiKey from the merged provider when using /connect
 # (merge script in references/add_commandcode_to_opencode.md)
 
 opencode models commandcode | wc -l   # 62
@@ -97,7 +100,7 @@ Base `https://api.commandcode.ai`, cookie auth. Console routes live under `/inte
 - `/chat/completions` takes `reasoning_effort` (`off`, `low`, `medium`, `high`, `xhigh`, `max`); Claude `/messages` takes `output_config.effort` (`low`, `medium`, `high`, `xhigh`, `max`).
 - GOAT allows every `opensource` model (62); premium models return `MODEL_NOT_IN_PLAN` (403).
 - Provider config: one `commandcode` provider on `@ai-sdk/openai-compatible`, with `claude-sonnet-5-5` overriding per-model `provider.npm` to `@ai-sdk/anthropic`; variants carry `reasoningEffort` per model, or `effort` for Claude.
-- The config uses `{env:COMMANDCODE_API_KEY}` so the key stays out of the config file.
+- The template uses `{env:COMMANDCODE_API_KEY}` so the key stays out of the config file. For credentials saved with `/connect`, omit `options.apiKey`; see the credential-source setup and troubleshooting in `references/add_commandcode_to_opencode.md`.
 
 ## Troubleshooting
 
@@ -105,6 +108,7 @@ Base `https://api.commandcode.ai`, cookie auth. Console routes live under `/inte
 | --- | --- |
 | `no Chrome profile with commandcode.ai cookies` | log in at https://commandcode.ai in Chrome |
 | HTTP 401/403 on `/internal/*` | stale session; re-login in Chrome |
+| `Invalid 'Authorization' header or token.` / HTTP 401 on `/provider/v1/*` | check the credential source: an unset `{env:COMMANDCODE_API_KEY}` can override a valid `/connect` key. Remove `provider.commandcode.options.apiKey` to use the saved key, or export the variable before launching opencode; restart and smoke-test. If it still fails, check key validity. |
 | Missing day in charts | `from` must include the day and `to` must be exclusive; pass tomorrow to include today |
 | HTTP 400 on `reasoning_effort` | use `off` instead of `none` |
 | `MODEL_NOT_IN_PLAN` | premium model; GOAT only includes `opensource` models |
