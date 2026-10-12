@@ -1,6 +1,6 @@
 ---
 name: commandcode-tools
-description: Query commandcode.ai current billing-period usage, credits and quota with the local Chrome login, generate or publish the HTML dashboard to Cloudflare KV, and wire the Command Code GOAT provider into opencode with all 62 models and reasoning-effort variants. Use for Command Code usage, per-model stats, cache hit rate, remaining credits or 5h/weekly limits, hosted report updates, or Command Code provider setup in opencode.
+description: Query commandcode.ai current billing-period usage, credits and quota with the local Chrome login, generate or publish the HTML dashboard to Cloudflare KV, and wire the Command Code GOAT provider into opencode with all 64 models and reasoning-effort variants (opencode 2.x native template plus an opencode 1.x legacy template). Use for Command Code usage, per-model stats, cache hit rate, remaining credits or 5h/weekly limits, hosted report updates, or Command Code provider setup in opencode.
 ---
 
 # Command Code tools
@@ -38,16 +38,17 @@ Both scripts use the current subscription's `currentPeriodStart/End`; there is n
 
 ### opencode provider
 
-Choose one credential source: use `/connect` with provider ID `commandcode` and omit `provider.commandcode.options.apiKey`, or use the template's environment-variable reference and export the key before starting opencode. An unset environment reference can override a valid saved credential and cause HTTP 401.
+Choose one credential source: use `/connect` with provider ID `commandcode` and omit `providers.commandcode.settings.apiKey`, or use the template's environment-variable reference and export the key before starting opencode. An unset environment reference can override a valid saved credential and cause HTTP 401.
 
 ```bash
 export COMMANDCODE_API_KEY=<cmd_api_key>   # environment mode only; create at https://commandcode.ai/settings/keys
 
-# merge references/commandcode_provider.json into ~/.config/opencode/opencode.json
-# remove options.apiKey from the merged provider when using /connect
-# (merge script in references/add_commandcode_to_opencode.md)
+# opencode 2.x: merge references/commandcode_provider.json into ~/.config/opencode/opencode.json
+# opencode 1.x: merge references/commandcode_provider_v1.json under "provider"
+# delete settings.apiKey (2.x) or options.apiKey (1.x) when using /connect
+# merge scripts in references/add_commandcode_to_opencode.md
 
-opencode models commandcode | wc -l   # 62
+opencode models | grep -c '^commandcode/'   # 64 (opencode 2.x)
 ```
 
 Full setup, model table, and option mapping: `references/add_commandcode_to_opencode.md`.
@@ -73,6 +74,7 @@ Base `https://api.commandcode.ai`, cookie auth. Console routes live under `/inte
 | `GET /internal/usage?limit=100` | last 24 h only with cursor pagination; rows carry `tokensIn/Out`, `durationTotal`, `meta.{model,totalCost,traceId}` |
 | `POST /internal/api-keys/list` with `{"orgId": null}` | key `id`/`name`/`createdAt`/`ownerUserId`/`ownerOrgId`; no usage fields |
 | `GET /internal/orgs/{orgId}/analytics?from=...&to=...` | official frontend displays member spending for organization owners/admins; per-member tokens are unverified |
+| `GET /internal/models` | `id`, `name`, `provider`, `category` (`opensource`/`premium`), `contextWindow`, `reasoning` |
 
 - Inspected personal-account usage APIs cannot split historical usage by key: request rows have no user/key identifier, charts aggregate by day/model/provider, and real or nonexistent `apiKeyId` filters return identical account totals from usage and summary. This does not establish that additional private logs are unavailable.
 - The inspected account's keys share one `ownerUserId`, and `/internal/orgs` is empty for that account. Separate organization members differ from people sharing a personal account's keys. The report groups key names (`wty*` → `wty`, `wt*` → `wt`, others → `xfy`) in the key table only.
@@ -97,10 +99,12 @@ Base `https://api.commandcode.ai`, cookie auth. Console routes live under `/inte
 ### Provider API and opencode
 
 - Base `https://api.commandcode.ai/provider/v1`; create keys at https://commandcode.ai/settings/keys.
-- `/chat/completions` takes `reasoning_effort` (`off`, `low`, `medium`, `high`, `xhigh`, `max`); Claude `/messages` takes `output_config.effort` (`low`, `medium`, `high`, `xhigh`, `max`).
-- GOAT allows every `opensource` model (62); premium models return `MODEL_NOT_IN_PLAN` (403).
-- Provider config: one `commandcode` provider on `@ai-sdk/openai-compatible`, with `claude-sonnet-5-5` overriding per-model `provider.npm` to `@ai-sdk/anthropic`; variants carry `reasoningEffort` per model, or `effort` for Claude.
-- The template uses `{env:COMMANDCODE_API_KEY}` so the key stays out of the config file. For credentials saved with `/connect`, omit `options.apiKey`; see the credential-source setup and troubleshooting in `references/add_commandcode_to_opencode.md`.
+- `/chat/completions` takes `reasoning_effort` (`off`, `low`, `medium`, `high`, `xhigh`, `max`); Claude `/messages` takes `output_config.effort` (`low`, `medium`, `high`, `xhigh`, `max`). Invalid values return HTTP 400; models that cannot turn thinking off reject `off`.
+- GOAT allows every `opensource` model (64); premium models return `MODEL_NOT_IN_PLAN` (403).
+- opencode 2.x template: `providers.commandcode` with `package` `@opencode/ai/providers/openai-compatible`; models carry `capabilities`, `compatibility.reasoningField`, `limit`, and `variants` arrays. `claude-sonnet-5-5` and `claude-haiku-5-5` override per-model `package` to `@opencode/ai/providers/anthropic` because Claude models only serve `/messages`.
+- opencode 1.x template `commandcode_provider_v1.json` keeps `npm`/`options`/`attachment`/`reasoning`/`interleaved`/`modalities`/object variants; opencode 2.x loads it with normalization warnings for the unsupported legacy fields.
+- Image input: 2.x uses `capabilities.input` and defaults custom models to text+image, so every model sets capabilities explicitly; 1.x uses `modalities.input`. Verified end-to-end: `deepseek/deepseek-v4.1-flash`, `-fast`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `mistral/mistral-large-4`.
+- The template uses `{env:COMMANDCODE_API_KEY}` so the key stays out of the config file. For credentials saved with `/connect`, omit the API key field; see the credential-source setup and troubleshooting in `references/add_commandcode_to_opencode.md`.
 
 ## Troubleshooting
 
@@ -108,12 +112,14 @@ Base `https://api.commandcode.ai`, cookie auth. Console routes live under `/inte
 | --- | --- |
 | `no Chrome profile with commandcode.ai cookies` | log in at https://commandcode.ai in Chrome |
 | HTTP 401/403 on `/internal/*` | stale session; re-login in Chrome |
-| `Invalid 'Authorization' header or token.` / HTTP 401 on `/provider/v1/*` | check the credential source: an unset `{env:COMMANDCODE_API_KEY}` can override a valid `/connect` key. Remove `provider.commandcode.options.apiKey` to use the saved key, or export the variable before launching opencode; restart and smoke-test. If it still fails, check key validity. |
+| `Invalid 'Authorization' header or token.` / HTTP 401 on `/provider/v1/*` | check the credential source: an unset `{env:COMMANDCODE_API_KEY}` can override a valid `/connect` key. Remove the API key field (`providers.commandcode.settings.apiKey` on 2.x, `provider.commandcode.options.apiKey` on 1.x) to use the saved key, or export the variable before launching opencode; restart and smoke-test. If it still fails, check key validity. |
 | Missing day in charts | `from` must include the day and `to` must be exclusive; pass tomorrow to include today |
-| HTTP 400 on `reasoning_effort` | use `off` instead of `none` |
+| HTTP 400 on `reasoning_effort` | use `off` instead of `none`; models that cannot disable thinking reject `off` |
 | `MODEL_NOT_IN_PLAN` | premium model; GOAT only includes `opensource` models |
-| `opencode models commandcode` prints nothing | invalid JSON or wrong config path; re-run the merge script |
-| Claude requests fail on `/chat/completions` | keep `claude-sonnet-5-5` on `@ai-sdk/anthropic`; Claude only serves `/messages` |
+| `opencode models \| grep '^commandcode/'` prints nothing | invalid JSON or wrong config path; re-run the merge script |
+| Claude requests fail on `/chat/completions` | keep `claude-sonnet-5-5` and `claude-haiku-5-5` on the anthropic package; Claude only serves `/messages` |
+| Images never reach the model | add `"image"` to `capabilities.input` (2.x) or `modalities.input` (1.x) after verifying the model serves images |
+| opencode 2.x warns `omitted unsupported legacy setting` | the 1.x template is in use; switch to the 2.x template to drop `attachment`/`reasoning` |
 
 ## Notes
 
