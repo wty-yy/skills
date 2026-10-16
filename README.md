@@ -2,6 +2,8 @@
 
 Skills I use for coding, writing, and everyday tasks.
 
+English | [简体中文](README.zh-CN.md)
+
 ## Usage
 
 Clone once and keep the checkout; installed skills link to it.
@@ -71,6 +73,7 @@ Categories follow `<category>/<skill>/SKILL.md`; the installers discover them au
 
 ### Tools
 
+- `build-vps`: set up VPS access, proxy nodes, and Clash Verge subscriptions with bandwidth usage and automatic rules.
 - `check-opencode-usage`: check OpenCode usage and costs.
 - `commandcode-tools`: check Command Code usage and configure its provider.
 - `get-wandb-data-from-chrome-cookie`: download W&B run data.

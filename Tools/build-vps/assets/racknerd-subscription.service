@@ -1,0 +1,28 @@
+[Unit]
+Description=Clash subscription with RackNerd official bandwidth usage
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+UMask=0077
+ExecStart=/usr/bin/python3 /usr/local/lib/racknerd-subscription/subscription_server.py
+Restart=on-failure
+RestartSec=10
+StateDirectory=racknerd-subscription
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+InaccessiblePaths=/root/.ssh /etc/ssh
+
+[Install]
+WantedBy=multi-user.target

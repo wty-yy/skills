@@ -1,0 +1,49 @@
+rule-providers:
+  private-domain:
+    type: http
+    behavior: domain
+    format: mrs
+    interval: 86400
+    proxy: PROXY
+    path: ./rules/private-domain.mrs
+    url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/private.mrs
+  private-address:
+    type: http
+    behavior: ipcidr
+    format: mrs
+    interval: 86400
+    proxy: PROXY
+    path: ./rules/private-address.mrs
+    url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/private.mrs
+  domestic-domain:
+    type: http
+    behavior: domain
+    format: mrs
+    interval: 86400
+    proxy: PROXY
+    path: ./rules/domestic-domain.mrs
+    url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs
+  foreign-domain:
+    type: http
+    behavior: domain
+    format: mrs
+    interval: 86400
+    proxy: PROXY
+    path: ./rules/foreign-domain.mrs
+    url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/geolocation-!cn.mrs
+  domestic-address:
+    type: http
+    behavior: ipcidr
+    format: mrs
+    interval: 86400
+    proxy: PROXY
+    path: ./rules/domestic-address.mrs
+    url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/cn.mrs
+
+rules:
+  - RULE-SET,private-domain,DIRECT
+  - RULE-SET,private-address,DIRECT,no-resolve
+  - RULE-SET,domestic-domain,DIRECT
+  - RULE-SET,foreign-domain,PROXY
+  - RULE-SET,domestic-address,DIRECT
+  - MATCH,PROXY

@@ -1,0 +1,3 @@
+interface:
+  display_name: "Build VPS"
+  short_description: "Set up VPS nodes and Clash subscriptions"

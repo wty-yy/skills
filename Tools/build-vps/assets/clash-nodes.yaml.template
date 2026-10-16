@@ -1,0 +1,50 @@
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+
+proxies:
+  - name: VPS-VMess-WS
+    type: vmess
+    server: "<NODE_DOMAIN>"
+    port: 8443
+    uuid: "<VMESS_UUID>"
+    alterId: 0
+    cipher: auto
+    udp: true
+    network: ws
+    tls: true
+    servername: "<NODE_DOMAIN>"
+    skip-cert-verify: false
+    client-fingerprint: chrome
+    alpn: [http/1.1]
+    ws-opts:
+      path: "/<WS_PATH>"
+      headers:
+        Host: "<NODE_DOMAIN>"
+  - name: VPS-VLESS-XHTTP
+    type: vless
+    server: "<NODE_DOMAIN>"
+    port: 2053
+    uuid: "<XHTTP_UUID>"
+    udp: true
+    packet-encoding: xudp
+    network: xhttp
+    tls: true
+    servername: "<NODE_DOMAIN>"
+    skip-cert-verify: false
+    client-fingerprint: chrome
+    alpn: [h2]
+    xhttp-opts:
+      host: "<NODE_DOMAIN>"
+      path: "/<XHTTP_PATH>"
+      mode: packet-up
+
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies: [VPS-VLESS-XHTTP, VPS-VMess-WS, DIRECT]
+
+# Merge clash-rules.yaml when regional split routing is requested.
+rules:
+  - MATCH,PROXY
