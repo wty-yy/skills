@@ -61,6 +61,8 @@ requested local identity, deploy only its public key, and configure the host
 alias. Test a fresh key-only connection before disabling passwords. Preserve a
 recovery connection, back up the configuration, inspect effective settings, and
 reload SSH. A reused multiplexed session does not prove that key login works.
+For an IP replacement, follow the migration section in the same reference;
+preserve existing subscription URLs when the hostname and service continue.
 
 ### 3. Install 3x-ui
 
@@ -111,6 +113,9 @@ documented protocol support is not an end-to-end test.
 If the user requests review first, stop before creating listeners. Otherwise,
 continue within the authorized scope using the node reference and
 [assets/clash-nodes.yaml.template](assets/clash-nodes.yaml.template).
+Honor the requested protocol, node names, count, and default selection. For
+multiple dedicated IPv6 exits, configure every allocated address using the IPv6
+reference, then follow the node reference's IPv6 routing and IPv4 fallback plan.
 
 ### 6. Deploy nodes, subscription downloads, and official traffic usage
 
@@ -123,6 +128,8 @@ Read [references/subscription-and-usage.md](references/subscription-and-usage.md
 for API credentials, subscription deployment, response headers, caching, and
 certificate reloads. The bundled service and systemd template are reusable
 implementation resources. API credentials must never enter the client profile.
+When expiry display is requested, use the reference's optional `expires_at`
+setting with a verified source and renewal-update procedure.
 
 Generate a complete profile with a selection group and explicit routing. When
 automatic regional split routing is requested, merge

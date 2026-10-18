@@ -53,6 +53,50 @@ Cloudflare terminates outer TLS. Ordinary VLESS without extra Encryption has a
 different trust boundary from VMess's protocol-level payload encryption. Explain
 that tradeoff; neither newer transport nor CDN routing guarantees higher speed.
 
+## Dedicated IPv6 exits with IPv4 fallback
+
+When requested, create one managed node per assigned IPv6 address. Honor the
+user's chosen protocol, display names, and default selection; several IPv6
+addresses do not require deploying several different protocols. Give each node
+its own UUID, transport path, available listener port, and matching client entry.
+For Cloudflare, choose supported HTTPS ports after checking panel and subscription
+listeners. Put the requested default first in the profile's selection group.
+
+Configure a distinct Freedom outbound for each node, with `sendThrough` set to
+that node's assigned IPv6. Bind traffic to the intended outbound through its
+unique `inboundTag` (or authenticated client identity for a shared listener).
+Preserve existing API, private-address blocking, and other unrelated rules.
+
+Use this routing order after existing safety rules:
+
+1. For each managed inbound, match destination `ip: ["::/0"]` and select its
+   dedicated IPv6 outbound.
+2. Follow that rule with the same inbound's catch-all to a shared IPv4 outbound.
+
+Set routing `domainStrategy: IPOnDemand` and configure built-in DNS to query both
+families, such as `queryStrategy: UseIP`. This lets a domain with AAAA records
+match the IPv6 rule before the IPv4 fallback. `IPIfNonMatch` with an unconditional
+inbound catch-all can prevent that second-pass lookup. Routing DNS resolution
+does not itself replace the outbound destination domain.
+
+On Xray 26.10.10, the dedicated IPv6 outbound was tested with
+`streamSettings.sockopt.domainStrategy: ForceIPv6` and its assigned `sendThrough`.
+Use a shared IPv4 outbound with an appropriate IPv4 resolution strategy and
+source address. Confirm field support against the installed core and validate
+the generated configuration before applying. Do not bind all destinations to
+an IPv6 source: an IPv4-only destination needs an IPv4-compatible outbound.
+
+If the client sends an IP instead of a domain, domain recovery through sniffing
+may be needed for dual-stack preference. Inspect the actual inbound's
+`destOverride` and `routeOnly` behavior; verify the generated configuration and
+traffic instead of assuming that a profile's `ipv6` switch controls server egress.
+
+For every node, test an IPv6-only HTTPS endpoint, a dual-stack endpoint, and an
+IPv4-only endpoint through the isolated client. Require the first two to report
+the assigned IPv6 and the last to report the intended shared IPv4. Also confirm
+the selected proxy chain. Document that IPv4-only sites see the shared address,
+and all nodes still share the VPS quota.
+
 ## REALITY boundary
 
 REALITY is excluded from the default workflow. It was abandoned after actual
@@ -110,3 +154,6 @@ Sources:
 - https://wiki.metacubex.one/config/proxies/transport/
 - https://wiki.metacubex.one/config/proxies/tls/
 - https://wiki.metacubex.one/config/dns/
+- https://xtls.github.io/config/routing.html
+- https://xtls.github.io/config/outbound.html
+- https://xtls.github.io/config/transport.html

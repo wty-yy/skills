@@ -44,6 +44,26 @@ Use the equivalent validation and recovery steps for other network managers.
 Configuring server IPv6 does not itself require changing client DNS, enabling
 IPv6 in a Clash profile, or adding a Cloudflare AAAA record.
 
+## Multiple allocated addresses
+
+Record every assigned address with its confirmed prefix and gateway. Add only
+the assigned addresses to the guest configuration; several addresses on one
+subnet normally share the provider-confirmed IPv6 default route. Do not add
+duplicate routes or infer that an allocated subnet permits arbitrary addresses.
+
+After DAD completes, test each address as an explicit source:
+
+```bash
+curl --noproxy '*' -6 --interface '<ASSIGNED_IPV6>' \
+  -fsS --max-time 15 https://api64.ipify.org
+```
+
+Require the returned address to match the selected source. A successful test
+without `--interface` proves only the address the kernel happened to select.
+Keep the node-name-to-IPv6 mapping in task artifacts. Configure proxy egress
+separately using [domain-and-nodes.md](domain-and-nodes.md); adding addresses
+alone does not give different nodes different exits.
+
 Sources:
 - https://netplan.readthedocs.io/en/stable/netplan-try/
 - https://docs.kernel.org/networking/ip-sysctl.html

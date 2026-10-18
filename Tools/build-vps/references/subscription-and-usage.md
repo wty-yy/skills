@@ -114,6 +114,44 @@ quota, including its non-proxy traffic. Do not represent monthly reset as a
 subscription expiration date. The profile update interval is an hourly client
 hint; actual automatic behavior depends on the application.
 
+## Optional server expiry display
+
+When requested, set `expires_at` in the populated settings JSON to a positive
+integer Unix timestamp in seconds. Omit it or leave it `null` when unverified.
+The bundled service appends this field to both GET and HEAD responses:
+
+```text
+Subscription-Userinfo: upload=0; download=<USED_BYTES>; total=<TOTAL_BYTES>; expire=<EXPIRY_UNIX_SECONDS>
+```
+
+Clash Verge reads `expire` as subscription metadata. Putting a date only in a
+YAML comment does not populate its subscription card. Refresh/import the remote
+subscription to receive the header; preserve the user's active proxy/TUN state.
+Distinguish verified response headers from a display actually observed in the UI.
+
+### Source and renewal maintenance
+
+Inspect the current API documentation and actual `action=info` response before
+claiming expiry comes from the API. The observed ctrl response, including all
+documented info flags (`status`, `ipaddr`, `bw`, `hdd`, `mem`), had no expiry or
+billing-date field. Do not invent a field, derive expiry from the monthly traffic
+reset, or assume that a future API has the same limitations.
+
+When the API lacks expiry, use the matching VPS's billing product page and its
+next due date, or a date explicitly supplied by the user. Match the service to
+the target IP and hostname. Record the source, check time, date precision, and
+timestamp convention in task artifacts. For a date-only source, UTC midnight
+can represent the calendar date; verify the displayed date in the intended
+client timezone and do not describe it as an exact shutdown time.
+
+Official usage continues to refresh through the API; a manually configured
+expiry does not. After renewal, recheck the billing date, update the operational
+settings and its local source, restart the subscription service, fetch GET/HEAD,
+and refresh the client subscription. State this maintenance requirement at
+delivery. Do not schedule future checks unless requested.
+
+## Imported profile names
+
 Use the filename exactly as shown without surrounding quotes or escape
 characters. Already imported profile names may require manual renaming or
 re-importing even after the response header is corrected.
@@ -126,6 +164,8 @@ Test populated GET and HEAD requests with normal TLS validation. Check:
 - API keys/hashes do not occur in response bodies, headers, or subscription URLs.
 - Counters match the target VPS and units; CDN responses are not stale cache hits.
 - Filename/title contain the complete server address and no quotes/backslashes.
+- If expiry is configured, GET/HEAD contain the verified `expire` timestamp and
+  it renders as the intended calendar date; report any UI verification limits.
 - Renewal reloads every certificate consumer and services are enabled/running.
 
 Run the bundled behavior tests without contacting a real provider:
@@ -137,3 +177,4 @@ PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s scripts -p 'test_*.
 Sources:
 - https://www.racknerd.com/ctrl-control-panel
 - https://blog.racknerd.com/racknerd-launches-ctrl-a-proprietary-platform-built-for-the-ai-era/
+- https://github.com/clash-verge-rev/clash-verge-rev/blob/dev/src-tauri/src/config/prfitem.rs

@@ -19,6 +19,9 @@ DATA_DIR = Path(os.environ.get('RACKNERD_SUB_DATA', '/var/lib/racknerd-subscript
 API_URL = 'https://ctrl.racknerd.com/api/client/command.php'
 settings = json.loads((CONFIG_DIR / 'settings.json').read_text())
 settings['server_ip'] = str(ipaddress.IPv4Address(settings['server_ip']))
+expires_at = settings.get('expires_at')
+if expires_at is not None and (type(expires_at) is not int or expires_at <= 0):
+    raise ValueError('expires_at must be a positive Unix timestamp in seconds')
 logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
 usage_lock = threading.Lock()
 last_usage = None
@@ -107,8 +110,10 @@ class SubscriptionHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(content)))
         profile_name = f'racknerd_{settings["server_ip"]}'
         self.send_header('Content-Disposition', f'attachment; filename={profile_name}.yaml')
-        self.send_header('Subscription-Userinfo',
-                         f'upload=0; download={usage["used"]}; total={usage["total"]}')
+        userinfo = f'upload=0; download={usage["used"]}; total={usage["total"]}'
+        if expires_at is not None:
+            userinfo += f'; expire={expires_at}'
+        self.send_header('Subscription-Userinfo', userinfo)
         self.send_header('Profile-Title', profile_name)
         self.send_header('Profile-Update-Interval', '1')
         self.send_header('Cache-Control', 'private, no-store, no-cache, max-age=0')

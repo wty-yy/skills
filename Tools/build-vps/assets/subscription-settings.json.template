@@ -2,6 +2,7 @@
   "server_ip": "<SERVER_IPV4>",
   "listen_host": "",
   "port": 2087,
+  "expires_at": null,
   "token": "<GENERATE_RANDOM_SUBSCRIPTION_TOKEN>",
   "api_credentials": "/etc/racknerd-subscription/api.json",
   "certificate": "<DOMAIN_CERTIFICATE_PATH>",
