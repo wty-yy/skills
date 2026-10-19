@@ -1,0 +1,9 @@
+[Unit]
+Description=Publish opencode usage report to Cloudflare KV
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Documents/ai_search/opencode_usage
+EnvironmentFile=%h/.config/opencode-usage/env
+ExecStart=%h/.local/bin/uv run usage_report.py --push
+TimeoutStartSec=600

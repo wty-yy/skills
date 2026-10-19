@@ -1,0 +1,11 @@
+[Unit]
+Description=Update opencode usage report every 10 minutes
+
+[Timer]
+OnCalendar=*:0/10
+Persistent=true
+AccuracySec=1min
+Unit=opencode-usage-push.service
+
+[Install]
+WantedBy=timers.target

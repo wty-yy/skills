@@ -11,6 +11,7 @@ Examples:
 """
 
 import argparse
+import calendar
 import json
 import os
 import random
@@ -18,7 +19,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
@@ -60,6 +61,115 @@ GO_TOKEN_PRICES = {
     "grok-4.6": [("≤200K", 2.00, 6.00, 0.50), (">200K", 4.00, 12.00, 1.00)],
     "gpt-5.6-luna": [("≤272K", 0.20, 1.20, 0.02), (">272K", 0.40, 1.80, 0.04)],
 }
+
+
+DATA_FLOOR = date(2026, 9, 13)  # first day covered by the Console v2 usage export
+MAX_PERIOD_DAYS = 90
+
+
+def add_months(day: date, months: int) -> date:
+    index = day.month - 1 + months
+    year = day.year + index // 12
+    month = index % 12 + 1
+    return date(year, month, min(day.day, calendar.monthrange(year, month)[1]))
+
+
+def build_periods(quota: dict, today: date, days: int | None) -> tuple[list[dict], str]:
+    """Split the subscription history into billing periods, newest first.
+
+    The current Go billing period is the default view; earlier periods (one
+    calendar month each, back to the export floor) stay selectable.
+    """
+    if days:
+        start = today - timedelta(days=days - 1)
+        period = {
+            "key": "recent",
+            "label": f"最近 {days} 天",
+            "start": start.isoformat(),
+            "end": today.isoformat(),
+            "current": False,
+        }
+        return [period], period["key"]
+
+    start = ou.parse_utc_day(quota.get("startsAt"))
+    end = ou.parse_utc_day(quota.get("endsAt"))
+    periods: list[dict] = []
+    if start and end and start <= end and start <= today:
+        periods.append(
+            {
+                "key": "current",
+                "label": "当前套餐周期",
+                "start": start.isoformat(),
+                "end": min(today, end).isoformat(),
+                "current": True,
+            }
+        )
+        for index in range(1, 4):
+            period_start = add_months(start, -index)
+            period_end = add_months(start, -(index - 1)) - timedelta(days=1)
+            if period_start < DATA_FLOOR:
+                break
+            periods.append(
+                {
+                    "key": f"prev{index}",
+                    "label": "上一套餐周期"
+                    if index == 1
+                    else f"更早套餐周期（-{index} 个月）",
+                    "start": period_start.isoformat(),
+                    "end": period_end.isoformat(),
+                    "current": False,
+                }
+            )
+    if not periods:
+        start, end = ou.subscription_span(quota, today, fallback_days=14)
+        periods.append(
+            {
+                "key": "recent",
+                "label": f"最近 {(end - start).days + 1} 天",
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "current": False,
+            }
+        )
+
+    floor = today - timedelta(days=MAX_PERIOD_DAYS - 1)
+    if periods[-1]["start"] < floor.isoformat():
+        periods = [
+            {**period, "start": max(period["start"], floor.isoformat())}
+            for period in periods
+            if period["end"] >= floor.isoformat()
+        ]
+        if not periods:
+            periods = [
+                {
+                    "key": "recent",
+                    "label": f"最近 {MAX_PERIOD_DAYS} 天",
+                    "start": floor.isoformat(),
+                    "end": today.isoformat(),
+                    "current": False,
+                }
+            ]
+    return periods, periods[0]["key"]
+
+
+def aggregate_day_models(rows: list[dict], start: date, end: date) -> dict:
+    """Per-day, per-model stats so the client can re-slice by billing period."""
+    out: dict[str, dict[str, dict]] = {}
+    for row in rows:
+        day = row["day"]
+        if not (start.isoformat() <= day <= end.isoformat()):
+            continue
+        cost = int(row["cost_micro_cents"] or 0) / ou.COST_SCALE
+        stats = out.setdefault(day, {}).setdefault(
+            row["model"], {"requests": 0, "tokens": 0, "cost": 0.0}
+        )
+        stats["requests"] += int(row["requests"] or 0)
+        stats["tokens"] += sum(
+            int(row[field] or 0)
+            for field in ("input_tokens", "output_tokens", "cache_read_tokens")
+        )
+        stats["cost"] = round(stats["cost"] + cost, 6)
+    return out
 
 
 def load_chartjs() -> str:
@@ -157,17 +267,27 @@ def build_data(args) -> dict:
     profile = Path(args.profile).expanduser() if args.profile else None
     headers = ou.auth_header_sets(args.workspace, profile)
 
+    quota = ou.fetch_quota(headers)
     today = datetime.now().astimezone().date()
-    cutoff = today - timedelta(days=args.days - 1)
-    dates = [cutoff + timedelta(days=offset) for offset in range(args.days)]
+    periods, default_period = build_periods(quota, today, args.days)
+    cutoff = date.fromisoformat(periods[-1]["start"])
+    last = date.fromisoformat(periods[0]["end"])
+    dates = [
+        cutoff + timedelta(days=offset) for offset in range((last - cutoff).days + 1)
+    ]
 
-    daily, model_stats = ou.aggregate_usage(
-        ou.fetch_usage(args.days, headers), cutoff, today
-    )
+    rows = ou.fetch_usage(len(dates), headers)
+    daily, _ = ou.aggregate_usage(rows, cutoff, last)
+    day_models = aggregate_day_models(rows, cutoff, last)
     key_names = ou.fetch_key_names(headers)
 
     history = load_history(Path(__file__).parent / "history.json")
     history_days = {entry["date"]: entry for entry in history.get("days", [])}
+    history_span = [min(history_days), max(history_days)] if history_days else None
+    history_costs = {
+        entry["date"]: round(entry.get("total", {}).get("cost") or 0.0, 6)
+        for entry in history.get("days", [])
+    }
     cache_days = ou.load_key_cache().get("days", {})
 
     def empty_group() -> dict:
@@ -262,22 +382,13 @@ def build_data(args) -> dict:
             }
         )
 
-    totals = empty_stats() | {"cost": 0.0}
-    for entry in days:
-        for field in TOKEN_FIELDS:
-            totals[field] += entry[field]
-        totals["requests"] += entry["requests"]
-        totals["cost"] += entry["cost"]
-    totals["tokens"] = total_tokens(totals)
-    totals["cost"] = round(totals["cost"], 6)
-
-    models = [
-        {"model": model, "cost": round(stats["cost"], 6)}
-        for model, stats in sorted(model_stats.items(), key=lambda kv: -kv[1]["cost"])
+    price_models = [
+        {"model": model}
+        for model in sorted({model for day in day_models.values() for model in day})
     ]
 
     price_rows = []
-    for entry in models:
+    for entry in price_models:
         variants = GO_TOKEN_PRICES.get(entry["model"])
         if not variants:
             price_rows.append(
@@ -301,47 +412,43 @@ def build_data(args) -> dict:
                 }
             )
 
-    key_stats, keys_fetched_at, keys_days = ou.fetch_key_stats(cutoff, today, headers)
-    keys = []
-    for key_id, stats in key_stats.items():
+    _, keys_fetched_at, keys_days = ou.fetch_key_stats(cutoff, last, headers)
+    cache_days = ou.load_key_cache().get("days", {})
+    key_days = {
+        iso: entry["keys"]
+        for iso, entry in cache_days.items()
+        if cutoff.isoformat() <= iso <= last.isoformat() and entry.get("keys")
+    }
+    keys_meta = {}
+    for key_id in {key_id for stats in key_days.values() for key_id in stats}:
         info = key_names.get(key_id, {})
         name = info.get("displayName", key_id)
-        if info.get("deleted"):
-            name += "（已删除）"
-        keys.append(
-            {
-                "id": key_id,
-                "name": name,
-                "group": ou.group_of(name),
-                **stats,
-                "tokens": ou.total_tokens(stats),
-                "cost": round(stats["cost"], 6),
-            }
-        )
+        keys_meta[key_id] = {
+            "name": name + ("（已删除）" if info.get("deleted") else ""),
+            "group": ou.group_of(name),
+        }
     history_key_costs = {
         normalize_key_name(old_key["name"]): old_key.get("cost") or 0.0
         for old_key in history.get("keys", [])
     }
-    for entry in keys:
-        entry["cost"] = round(
-            entry["cost"]
-            + history_key_costs.get(normalize_key_name(entry["name"]), 0.0),
-            6,
-        )
-    keys.sort(key=lambda entry: (-entry["cost"], entry["name"]))
 
     return {
         "generatedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
         "workspace": args.workspace,
         "range": [dates[0].isoformat(), dates[-1].isoformat()],
+        "periods": periods,
+        "defaultPeriod": default_period,
         "days": days,
-        "totals": totals,
-        "keys": keys,
+        "dayModels": day_models,
+        "keyDays": key_days,
+        "keysMeta": keys_meta,
+        "historyKeyCosts": history_key_costs,
+        "historyCosts": history_costs,
+        "historySpan": history_span,
         "keysFetchedAt": keys_fetched_at,
         "keysDays": keys_days,
-        "models": models,
         "priceRows": price_rows,
-        "quota": ou.fetch_quota(headers),
+        "quota": quota,
     }
 
 
@@ -350,21 +457,35 @@ TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>opencode 用量报告</title>
+<title>OpenCode 用量报告</title>
 <style>
   :root { color-scheme: dark; --bg:#0f1117; --panel:#171a23; --line:#262b38; --text:#e6e9f0; --muted:#8b93a7; --hover:#1c2029; --bar-bg:#232838; --wt:#4f8cff; --yy:#f5a54a; --ok:#3ddc97; --warn:#ff6b6b; }
-  :root[data-theme="light"] { color-scheme: light; --bg:#f4f6fb; --panel:#ffffff; --line:#e2e6ef; --text:#1b2130; --muted:#6b7488; --hover:#f2f4f9; --bar-bg:#e8ebf3; --wt:#2f6fe4; --yy:#d97f17; }
+  :root[data-theme="light"] { color-scheme: light; --bg:#f4f6fb; --panel:#ffffff; --line:#e2e6ef; --text:#1b2130; --muted:#6b7488; --hover:#f2f4f9; --bar-bg:#e8ebf3; --wt:#2f6fe4; --yy:#d97f17; --ok:#178a56; --warn:#cf3f3f; }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font:14px/1.55 "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; transition:background .2s, color .2s; }
   main { max-width:1180px; margin:0 auto; padding:28px 20px 60px; }
   header { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; }
   header h1 { margin:0 0 6px; font-size:24px; }
   header .meta { color:var(--muted); font-size:13px; }
-  .theme-toggle { flex:none; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:9px; padding:8px 14px; font-size:13px; cursor:pointer; transition:border-color .15s, background .2s; }
-  .theme-toggle:hover { border-color:var(--muted); }
+  .theme-toggle, .refresh-btn { flex:none; display:inline-flex; align-items:center; gap:6px; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:9px; padding:8px 14px; font-size:13px; cursor:pointer; transition:border-color .15s, background .2s, color .15s; }
+  .theme-toggle:hover, .refresh-btn:hover { border-color:var(--muted); }
+  .refresh-btn:disabled { cursor:progress; opacity:.75; }
+  .refresh-btn.success { border-color:var(--ok); color:var(--ok); }
+  .refresh-btn.failed { border-color:var(--warn); color:var(--warn); }
+  .refresh-btn .icon { display:inline-block; font-size:15px; line-height:1; transform-origin:50% 50%; }
+  .refresh-btn.loading .icon { animation:spin .8s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .refresh-btn.loading .icon { animation:none; } }
+  .controls { display:flex; align-items:center; gap:10px; flex:none; }
+  .period-select { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:9px; padding:8px 34px 8px 12px; font-size:13px; cursor:pointer; max-width:360px; text-overflow:ellipsis; }
+  .period-select:hover { border-color:var(--muted); }
+  @media (max-width:980px) { header { flex-wrap:wrap; } .controls { flex-wrap:wrap; } }
+  @media (max-width:760px) { .controls { width:100%; } .period-select { flex:1 1 100%; width:100%; max-width:100%; } }
+  .badge { display:inline-block; padding:1px 8px; border-radius:999px; font-size:11.5px; background:var(--bar-bg); color:var(--muted); margin-left:8px; }
+  .badge.live { background:rgba(61,220,151,.16); color:var(--ok); }
   h2 { font-size:16px; margin:0 0 12px; }
   section { margin-top:26px; }
-  .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:14px; margin-top:22px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:14px; margin-top:22px; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
   .card .label { color:var(--muted); font-size:12.5px; }
   .card .value { font-size:26px; font-weight:600; margin-top:6px; }
@@ -373,6 +494,7 @@ TEMPLATE = """<!DOCTYPE html>
   .grid2 > * { min-width:0; }
   @media (max-width:900px) { .grid2 { grid-template-columns:1fr; } }
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; overflow-x:auto; }
+  .chart-wrap { position:relative; height:300px; max-width:100%; margin:0 auto; }
   canvas { max-height:320px; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th, td { padding:8px 10px; text-align:right; border-bottom:1px solid var(--line); white-space:nowrap; }
@@ -403,29 +525,35 @@ try {
 <main>
   <header>
     <div>
-      <h1>opencode 用量报告</h1>
+      <h1>OpenCode 用量报告</h1>
       <div class="meta" id="meta"></div>
     </div>
-    <button id="themeToggle" class="theme-toggle" type="button">浅色模式</button>
+    <div class="controls">
+      <select id="periodSelect" class="period-select" title="切换查看的套餐周期"></select>
+      <button id="refreshBtn" class="refresh-btn" type="button" title="获取最新发布的报告（每 10 分钟自动发布一次）">
+        <span class="icon" aria-hidden="true">↻</span><span id="refreshLabel">刷新</span>
+      </button>
+      <button id="themeToggle" class="theme-toggle" type="button">浅色模式</button>
+    </div>
   </header>
 
   <section class="cards" id="cards"></section>
 
   <section>
-    <h2>OpenCode Go 会员额度</h2>
+    <h2>当前套餐：OpenCode Go 额度<span class="badge live" id="quotaBadge">实时</span></h2>
     <div class="quota-grid" id="quota"></div>
     <div class="footnote" id="quotaNote"></div>
   </section>
 
   <section class="grid2">
-    <div class="panel"><h2>每日费用（USD）</h2><canvas id="costChart"></canvas></div>
-    <div class="panel"><h2>每日 Token 用量</h2><canvas id="tokenChart"></canvas></div>
+    <div class="panel"><h2>每日费用（USD）</h2><div class="chart-wrap"><canvas id="costChart"></canvas></div></div>
+    <div class="panel"><h2>每日 Token 用量</h2><div class="chart-wrap"><canvas id="tokenChart"></canvas></div></div>
   </section>
 
   <section class="panel">
     <h2>每日明细</h2>
     <table id="dailyTable"></table>
-    <div class="footnote">每日/模型数据来自 Console v2 用量导出（天 × 模型，覆盖 90 天）；按密钥明细来自请求日志（保留 30 天、9/22 起有记录）。</div>
+    <div class="footnote">每日/模型数据来自 Console v2 用量导出（天 × 模型）；wt/yy 拆分来自请求日志（保留 30 天，9/22 起有记录），缺失天数显示「—」并随后台缓存回填逐步补齐。</div>
   </section>
 
   <section class="panel">
@@ -445,9 +573,10 @@ try {
 
   <footer id="footer"></footer>
 </main>
+<script type="application/json" id="reportData">__DATA__</script>
 <script>__CHARTJS__</script>
 <script>
-const DATA = __DATA__;
+let DATA = JSON.parse(document.getElementById("reportData").textContent);
 const CHARTJS_FALLBACK = "https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js";
 
 const fmtInt = v => (v || 0).toLocaleString("en-US");
@@ -461,11 +590,33 @@ const fmtTokens = v => {
 const fmtUSD = v => "$" + (v || 0).toFixed(4);
 const fmtQuotaUSD = v => "$" + ((v || 0) / 1e8).toFixed(2);
 const GROUP_LABEL = { wt: "wt", yy: "yy（其他密钥）" };
-const groupSum = (group, field) =>
-  DATA.days.reduce((s, d) => s + (d.groups ? d.groups[group][field] || 0 : 0), 0);
-const groupHit = group => {
+const normKeyName = name => {
+  const plain = String(name || "").replace("（已删除）", "");
+  return plain.includes(" - ") ? plain.split(" - ").pop() : plain;
+};
+
+const state = { period: DATA.defaultPeriod };
+const currentPeriod = () =>
+  DATA.periods.find(p => p.key === state.period) || DATA.periods[0];
+const periodDays = () => {
+  const p = currentPeriod();
+  return DATA.days.filter(d => d.date >= p.start && d.date <= p.end);
+};
+const emptyTotals = () => ({
+  requests: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0,
+  cacheReadTokens: 0, tokens: 0, cost: 0,
+});
+const sumDays = days => days.reduce((acc, d) => {
+  for (const field of ["requests", "inputTokens", "outputTokens", "reasoningTokens", "cacheReadTokens", "tokens", "cost"]) {
+    acc[field] += d[field] || 0;
+  }
+  return acc;
+}, emptyTotals());
+const groupSum = (days, group, field) =>
+  days.reduce((s, d) => s + (d.groups ? d.groups[group][field] || 0 : 0), 0);
+const groupHit = (days, group) => {
   let input = 0, cache = 0;
-  for (const d of DATA.days) {
+  for (const d of days) {
     const g = d.groups && d.groups[group];
     if (g && g.inputTokens !== null && g.inputTokens !== undefined) {
       input += g.inputTokens;
@@ -475,6 +626,65 @@ const groupHit = group => {
   const denom = input + cache;
   return denom ? ((cache / denom) * 100).toFixed(1) + "%" : "—";
 };
+const hasKeyTokens = day => {
+  const g = day.groups && day.groups.wt;
+  return Boolean(g) && g.inputTokens !== null && g.inputTokens !== undefined;
+};
+const periodHit = days => {
+  let input = 0, cache = 0, covered = 0;
+  for (const day of days) {
+    if (!hasKeyTokens(day)) continue;
+    covered += 1;
+    for (const group of ["wt", "yy"]) {
+      input += day.groups[group].inputTokens || 0;
+      cache += day.groups[group].cacheReadTokens || 0;
+    }
+  }
+  const denom = input + cache;
+  return { value: denom ? ((cache / denom) * 100).toFixed(1) + "%" : "—", covered };
+};
+
+function keyRows(days) {
+  const period = currentPeriod();
+  const rows = {};
+  for (const d of days) {
+    const entry = DATA.keyDays[d.date];
+    if (!entry) continue;
+    for (const [id, s] of Object.entries(entry)) {
+      const row = rows[id] || (rows[id] = { id, requests: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheReadTokens: 0, cost: 0 });
+      for (const field of ["requests", "inputTokens", "outputTokens", "reasoningTokens", "cacheReadTokens", "cost"]) {
+        row[field] += s[field] || 0;
+      }
+    }
+  }
+  const hist = DATA.historyCosts || {};
+  const histDates = Object.keys(hist);
+  const histTotal = histDates.reduce((s, date) => s + (hist[date] || 0), 0);
+  const histInside = histDates
+    .filter(date => date >= period.start && date <= period.end)
+    .reduce((s, date) => s + (hist[date] || 0), 0);
+  const legacyFactor = histTotal ? histInside / histTotal : 0;
+  return Object.values(rows).map(row => {
+    const meta = DATA.keysMeta[row.id] || { name: row.id, group: "yy" };
+    const cost = row.cost + (DATA.historyKeyCosts[normKeyName(meta.name)] || 0) * legacyFactor;
+    return { ...row, name: meta.name, group: meta.group, tokens: row.inputTokens + row.outputTokens + row.reasoningTokens + row.cacheReadTokens, cost };
+  }).sort((a, b) => b.cost - a.cost || a.name.localeCompare(b.name));
+}
+
+function modelRows(days) {
+  const rows = {};
+  for (const d of days) {
+    const entry = DATA.dayModels[d.date];
+    if (!entry) continue;
+    for (const [model, s] of Object.entries(entry)) {
+      const row = rows[model] || (rows[model] = { model, requests: 0, tokens: 0, cost: 0 });
+      row.requests += s.requests || 0;
+      row.tokens += s.tokens || 0;
+      row.cost += s.cost || 0;
+    }
+  }
+  return Object.values(rows).sort((a, b) => b.cost - a.cost);
+}
 
 const cacheHit = s => {
   const denom = (s.cacheReadTokens || 0) + (s.inputTokens || 0);
@@ -499,49 +709,68 @@ function el(tag, cls, html) {
 }
 
 function renderMeta() {
+  const q = DATA.quota || {};
+  const plan = q.startsAt && q.endsAt
+    ? "套餐周期 " + q.startsAt.slice(0, 10) + " ~ " + q.endsAt.slice(0, 10)
+    : "套餐周期未知";
   document.getElementById("meta").textContent =
-    "工作区 " + DATA.workspace + " · " + DATA.range[0] + " ~ " + DATA.range[1] +
-    " · 生成于 " + DATA.generatedAt.replace("T", " ").slice(0, 19);
+    plan + " · 生成于 " + DATA.generatedAt.replace("T", " ").slice(0, 19);
   document.getElementById("footer").textContent =
-    "数据来源：OpenCode Console v2 用量导出（天 × 模型）；按密钥明细已停用。";
+    "数据来源：OpenCode Console v2 用量导出（天 × 模型）；按密钥明细来自请求日志（保留 30 天，9/22 起有记录）。报告每 10 分钟自动发布，点击右上角「刷新」即可载入最新数据。";
+}
+
+function renderPeriodSelect() {
+  const select = document.getElementById("periodSelect");
+  select.innerHTML = DATA.periods.map(p =>
+    '<option value="' + p.key + '"' + (p.key === state.period ? " selected" : "") + ">" +
+    p.label + " · " + p.start + " ~ " + p.end + "</option>").join("");
 }
 
 function renderCards() {
   const cards = document.getElementById("cards");
-  const t = DATA.totals;
-  const monthly = DATA.quota.windows.month;
+  const days = periodDays();
+  const t = sumDays(days);
+  const monthly = (DATA.quota.windows || {}).month;
+  const withData = days.filter(d => d.requests || d.tokens || d.cost).length;
+  const splitDays = days.filter(d => d.groups).length;
+  const hit = periodHit(days);
+  const coverage = splitDays && splitDays < withData ? "（wt/yy 覆盖 " + splitDays + "/" + withData + " 天）" : "";
+  const hitCoverage = hit.covered && hit.covered < withData ? "（覆盖 " + hit.covered + "/" + withData + " 天）" : "";
   const items = [
     {
       label: "总费用",
       value: fmtUSD(t.cost),
-      sub: "wt " + fmtUSD(groupSum("wt", "cost")) + " · yy " + fmtUSD(groupSum("yy", "cost")),
+      sub: "wt " + fmtUSD(groupSum(days, "wt", "cost")) + " · yy " + fmtUSD(groupSum(days, "yy", "cost")) + coverage,
     },
     {
-      label: "Go 月额度剩余",
+      label: "当前套餐月额度剩余",
       value: monthly ? fmtQuotaUSD(monthly.limit - monthly.usage) : "—",
-      sub: monthly ? "已用 " + monthly.percent + "% · 总额度 " + fmtQuotaUSD(monthly.limit) : "未订阅或不可用",
+      sub: monthly ? "已用 " + monthly.percent + "% · 总额度 " + fmtQuotaUSD(monthly.limit) + "（实时）" : "未订阅或不可用",
     },
     {
       label: "总 Token",
       value: fmtTokens(t.tokens),
-      sub: "wt " + fmtTokens(groupSum("wt", "tokens")) + " · yy " + fmtTokens(groupSum("yy", "tokens")),
+      sub: "wt " + fmtTokens(groupSum(days, "wt", "tokens")) + " · yy " + fmtTokens(groupSum(days, "yy", "tokens")),
     },
     {
       label: "缓存命中率",
-      value: cacheHit(t),
-      sub: "wt " + groupHit("wt") + " · yy " + groupHit("yy") + "（9/22 起）",
+      value: hit.covered ? hit.value : cacheHit(t),
+      sub: hit.covered
+        ? "wt " + groupHit(days, "wt") + " · yy " + groupHit(days, "yy") + hitCoverage
+        : "请求日志无记录，按官方导出计算",
     },
     {
       label: "总请求数",
       value: fmtInt(t.requests),
-      sub: "wt " + fmtInt(groupSum("wt", "requests")) + " · yy " + fmtInt(groupSum("yy", "requests")),
+      sub: "wt " + fmtInt(groupSum(days, "wt", "requests")) + " · yy " + fmtInt(groupSum(days, "yy", "requests")),
     },
     {
       label: "日均费用",
-      value: fmtUSD(t.cost / DATA.days.length),
-      sub: "wt " + fmtUSD(groupSum("wt", "cost") / DATA.days.length) + " · yy " + fmtUSD(groupSum("yy", "cost") / DATA.days.length),
+      value: fmtUSD(t.cost / (days.length || 1)),
+      sub: "wt " + fmtUSD(groupSum(days, "wt", "cost") / (days.length || 1)) + " · yy " + fmtUSD(groupSum(days, "yy", "cost") / (days.length || 1)),
     },
   ];
+  cards.innerHTML = "";
   for (const item of items) {
     cards.append(el("div", "card",
       '<div class="label">' + item.label + '</div><div class="value">' + item.value + '</div><div class="sub">' + item.sub + "</div>"));
@@ -551,8 +780,15 @@ function renderCards() {
 function renderQuota() {
   const box = document.getElementById("quota");
   const note = document.getElementById("quotaNote");
+  box.innerHTML = "";
   if (DATA.quota.error) { box.append(el("div", "card", DATA.quota.error)); return; }
-  if (!DATA.quota.subscribed) { box.append(el("div", "card", "当前工作区未订阅 OpenCode Go。")); return; }
+  if (!DATA.quota.subscribed) {
+    box.append(el("div", "card", "当前工作区未订阅 OpenCode Go。"));
+    document.getElementById("quotaBadge").textContent = "未订阅";
+    document.getElementById("quotaBadge").classList.remove("live");
+    note.textContent = "";
+    return;
+  }
   for (const scope of ["fiveHour", "week", "month"]) {
     const w = DATA.quota.windows[scope];
     if (!w) continue;
@@ -569,9 +805,8 @@ function renderQuota() {
       '<div class="nums" style="margin-top:6px">' + reset + "</div>";
     box.append(node);
   }
-  const end = DATA.quota.endsAt ? DATA.quota.endsAt.slice(0, 10) : "—";
-  const renew = DATA.quota.cancelAtPeriodEnd ? "到期后不续费" : "自动续费";
-  note.textContent = "额度窗口：5 小时 = 月额度的 20%，每周 = 50%，每月 = 100%；月度额度重置时间 = 订阅周期结束（" + end + "，" + renew + "）。额度统计包含 9/22 迁移前的用量，与下方明细表区间可能不一致。";
+  note.textContent =
+    "额度窗口：5 小时 = 月额度的 20%，每周 = 50%，每月 = 100%。";
 }
 
 let costChart, tokenChart;
@@ -598,7 +833,13 @@ function renderCharts() {
   const palette = chartPalette();
   Chart.defaults.color = palette.text;
   Chart.defaults.borderColor = palette.grid;
-  const labels = DATA.days.map(d => d.date.slice(5));
+  const days = periodDays();
+  const labels = days.map(d => d.date.slice(5));
+  const plotWidth = Math.min(560, Math.max(300, days.length * 56 + 140));
+  document.querySelectorAll(".chart-wrap").forEach(node => {
+    node.style.maxWidth = plotWidth + "px";
+  });
+  const bar = { maxBarThickness: 28, borderRadius: 4 };
   const base = {
     responsive: true,
     maintainAspectRatio: false,
@@ -612,9 +853,9 @@ function renderCharts() {
       labels,
       datasets: ["wt", "yy"].map((group, i) => ({
         label: GROUP_LABEL[group],
-        data: DATA.days.map(day => day.groups ? day.groups[group].cost : 0),
+        data: days.map(day => day.groups ? day.groups[group].cost : 0),
         backgroundColor: i ? "#f5a54a" : "#4f8cff",
-        borderRadius: 4,
+        ...bar,
       })),
     },
     options: { ...base, plugins: { ...base.plugins, tooltip: { callbacks: { label: ctx => ctx.dataset.label + ": " + fmtUSD(ctx.parsed.y) } } } },
@@ -625,9 +866,9 @@ function renderCharts() {
       labels,
       datasets: ["wt", "yy"].map((group, i) => ({
         label: GROUP_LABEL[group],
-        data: DATA.days.map(day => day.groups ? day.groups[group].tokens : 0),
+        data: days.map(day => day.groups ? day.groups[group].tokens : 0),
         backgroundColor: i ? "#f5a54a" : "#4f8cff",
-        borderRadius: 4,
+        ...bar,
       })),
     },
     options: { ...base, plugins: { ...base.plugins, tooltip: { callbacks: { label: ctx => ctx.dataset.label + ": " + fmtInt(ctx.parsed.y) + " (" + fmtTokens(ctx.parsed.y) + ")" } } } },
@@ -650,56 +891,73 @@ function table(containerId, headers, rows) {
 }
 
 function renderTables() {
+  const days = periodDays();
+  const totals = sumDays(days);
+  const rows = days.slice().reverse().filter(d => d.requests || d.tokens || d.cost).map(d => [
+    d.date,
+    fmtInt(d.requests),
+    d.groups ? fmtInt(d.groups.wt.tokens) : "—",
+    d.groups ? fmtInt(d.groups.yy.tokens) : "—",
+    "<strong>" + fmtInt(d.tokens) + "</strong>",
+    d.groups ? fmtUSD(d.groups.wt.cost) : "—",
+    d.groups ? fmtUSD(d.groups.yy.cost) : "—",
+    "<strong>" + fmtUSD(d.cost) + "</strong>",
+  ]);
+  if (!rows.length) {
+    rows.push(['<span style="color:#8b93a7">该周期暂无用量数据</span>', "", "", "", "", "", "", ""]);
+  }
   table("dailyTable",
     ["日期", "请求数", "wt Tokens", "yy Tokens", "合计 Tokens", "wt 费用", "yy 费用", "合计费用"],
-    DATA.days.slice().reverse().filter(d => d.requests || d.tokens || d.cost).map(d => [
-      d.date,
-      fmtInt(d.requests),
-      d.groups ? fmtInt(d.groups.wt.tokens) : "—",
-      d.groups ? fmtInt(d.groups.yy.tokens) : "—",
-      "<strong>" + fmtInt(d.tokens) + "</strong>",
-      d.groups ? fmtUSD(d.groups.wt.cost) : "—",
-      d.groups ? fmtUSD(d.groups.yy.cost) : "—",
-      "<strong>" + fmtUSD(d.cost) + "</strong>",
-    ]).concat([[
+    rows.concat([[
       "<strong>合计</strong>",
-      "<strong>" + fmtInt(DATA.totals.requests) + "</strong>",
-      "<strong>" + fmtInt(groupSum("wt", "tokens")) + "</strong>",
-      "<strong>" + fmtInt(groupSum("yy", "tokens")) + "</strong>",
-      "<strong>" + fmtInt(DATA.totals.tokens) + "</strong>",
-      "<strong>" + fmtUSD(groupSum("wt", "cost")) + "</strong>",
-      "<strong>" + fmtUSD(groupSum("yy", "cost")) + "</strong>",
-      "<strong>" + fmtUSD(DATA.totals.cost) + "</strong>",
+      "<strong>" + fmtInt(totals.requests) + "</strong>",
+      "<strong>" + fmtInt(groupSum(days, "wt", "tokens")) + "</strong>",
+      "<strong>" + fmtInt(groupSum(days, "yy", "tokens")) + "</strong>",
+      "<strong>" + fmtInt(totals.tokens) + "</strong>",
+      "<strong>" + fmtUSD(groupSum(days, "wt", "cost")) + "</strong>",
+      "<strong>" + fmtUSD(groupSum(days, "yy", "cost")) + "</strong>",
+      "<strong>" + fmtUSD(totals.cost) + "</strong>",
     ]]));
 
-  if (DATA.keys && DATA.keys.length) {
+  const keys = keyRows(days);
+  if (keys.length) {
     table("keyTable",
-      ["密钥", "分组", "请求数", "输入", "输出", "缓存读取", "合计 Tokens", "费用(USD)"],
-      DATA.keys.map(k => [
+      ["密钥", "分组", "请求数", "输入", "输出", "缓存读取", "缓存命中率", "合计 Tokens", "费用(USD)"],
+      keys.map(k => [
         k.name + '<span class="tag ' + k.group + '">' + k.group + "</span>",
         k.group,
         fmtInt(k.requests),
         fmtInt(k.inputTokens),
         fmtInt(k.outputTokens),
         fmtInt(k.cacheReadTokens),
+        cacheHit(k),
         fmtInt(k.tokens),
         fmtUSD(k.cost),
       ]));
     if (DATA.keysFetchedAt) {
       document.getElementById("keyNote").textContent =
-        "按密钥：费用覆盖 9/13 起（早期间为报告快照汇总），请求数/Token 自 9/22 起（请求日志，覆盖 " + DATA.keysDays + " 天）；按天缓存增量刷新，缓存时间 " + DATA.keysFetchedAt.replace("T", " ").slice(0, 19) + "。";
+        "按密钥：请求数/Token/缓存命中率来自请求日志（保留 30 天、9/22 起有记录，本周期已缓存 " + DATA.keysDays + " 天），费用另含 9/13~9/21 快照按日折算；缓存时间 " + DATA.keysFetchedAt.replace("T", " ").slice(0, 19) + "。";
     }
   } else {
-    document.getElementById("keyTable").outerHTML = '<div class="footnote">按密钥数据暂不可用（请求日志缓存为空，稍后重试）。</div>';
+    table("keyTable", ["密钥", "分组", "请求数", "输入", "输出", "缓存读取", "缓存命中率", "合计 Tokens", "费用(USD)"], [
+      ['<span style="color:#8b93a7">该周期暂无按密钥明细（请求日志仅保留 30 天）</span>', "", "", "", "", "", "", "", ""],
+    ]);
+    document.getElementById("keyNote").textContent =
+      "按密钥明细来自请求日志（保留 30 天、9/22 起有记录），该周期内没有可用的密钥级数据。";
   }
 
+  const models = modelRows(days);
   table("modelTable",
-    ["模型", "费用", "占比"],
-    DATA.models.map(m => [
-      m.model,
-      fmtUSD(m.cost),
-      DATA.totals.cost ? ((m.cost / DATA.totals.cost) * 100).toFixed(1) + "%" : "0%",
-    ]));
+    ["模型", "请求数", "Token", "费用", "占比"],
+    (models.length ? models : [{ model: null }]).map(m => m.model === null
+      ? ['<span style="color:#8b93a7">该周期暂无模型数据</span>', "", "", "", ""]
+      : [
+        m.model,
+        fmtInt(m.requests),
+        fmtInt(m.tokens),
+        fmtUSD(m.cost),
+        totals.cost ? ((m.cost / totals.cost) * 100).toFixed(1) + "%" : "0%",
+      ]));
 
   const fmtPrice = v => v === null ? "—" : "$" + v.toFixed(2);
   table("priceTable",
@@ -713,22 +971,113 @@ function renderTables() {
     ]));
 }
 
+function renderAll() {
+  renderMeta();
+  renderCards();
+  renderQuota();
+  renderCharts();
+  renderTables();
+  tick();
+}
+
 function tick() {
   document.querySelectorAll(".countdown").forEach(node => {
     node.textContent = countdown(node.dataset.reset);
   });
 }
 
+const REFRESH_IDLE_LABEL = "刷新";
+const REFRESH_IDLE_TITLE = "获取最新发布的报告（每 10 分钟自动发布一次）";
+let refreshResetTimer;
+
+function setRefreshState(label, { loading = false, failed = false, success = false, title } = {}) {
+  const button = document.getElementById("refreshBtn");
+  document.getElementById("refreshLabel").textContent = label;
+  button.classList.toggle("loading", loading);
+  button.classList.toggle("failed", failed);
+  button.classList.toggle("success", success);
+  button.disabled = loading;
+  button.title = title || REFRESH_IDLE_TITLE;
+}
+
+function scheduleRefreshReset() {
+  clearTimeout(refreshResetTimer);
+  refreshResetTimer = setTimeout(() => setRefreshState(REFRESH_IDLE_LABEL), 2600);
+}
+
+function parseReportData(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const node = doc.getElementById("reportData");
+  if (!node) throw new Error("未找到报告数据，登录可能已过期");
+  return JSON.parse(node.textContent);
+}
+
+function applyReportData(next) {
+  if (!next || !Array.isArray(next.periods) || !next.periods.length ||
+      !Array.isArray(next.days) || !next.dayModels || !next.keyDays || !next.quota) {
+    throw new Error("报告数据格式不完整");
+  }
+  const previousPeriod = state.period;
+  DATA = next;
+  if (!DATA.periods.some(p => p.key === previousPeriod)) {
+    state.period = DATA.periods.some(p => p.key === DATA.defaultPeriod)
+      ? DATA.defaultPeriod
+      : DATA.periods[0].key;
+  }
+  renderPeriodSelect();
+  renderAll();
+}
+
+async function refreshReport() {
+  const button = document.getElementById("refreshBtn");
+  if (button.disabled) return;
+  if (location.protocol === "file:") {
+    location.reload();
+    return;
+  }
+  clearTimeout(refreshResetTimer);
+  setRefreshState("刷新中…", { loading: true });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  try {
+    const url = new URL(location.href);
+    url.searchParams.set("_refresh", Date.now().toString(36));
+    const response = await fetch(url.toString(), {
+      cache: "no-store",
+      credentials: "same-origin",
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    const next = parseReportData(await response.text());
+    if (next.generatedAt === DATA.generatedAt) {
+      setRefreshState("已是最新", { success: true });
+    } else {
+      applyReportData(next);
+      setRefreshState("已更新", { success: true });
+    }
+  } catch (error) {
+    if (error.name === "AbortError") error = new Error("请求超时");
+    setRefreshState("刷新失败", {
+      failed: true,
+      title: "刷新失败：" + error.message + "（点击重试）",
+    });
+  } finally {
+    clearTimeout(timeout);
+    scheduleRefreshReset();
+  }
+}
+
+document.getElementById("refreshBtn").addEventListener("click", refreshReport);
 document.getElementById("themeToggle").addEventListener("click", () => {
   applyTheme(currentTheme() === "light" ? "dark" : "light");
 });
+document.getElementById("periodSelect").addEventListener("change", event => {
+  state.period = event.target.value;
+  renderAll();
+});
 document.getElementById("themeToggle").textContent = currentTheme() === "light" ? "深色模式" : "浅色模式";
-renderMeta();
-renderCards();
-renderQuota();
-renderCharts();
-renderTables();
-tick();
+renderPeriodSelect();
+renderAll();
 setInterval(tick, 30000);
 </script>
 </body>
@@ -739,7 +1088,9 @@ setInterval(tick, 30000);
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate an HTML usage report")
     parser.add_argument(
-        "--days", type=int, default=14, help="number of days (default 14)"
+        "--days",
+        type=int,
+        help="number of days (default: current OpenCode Go billing period up to today)",
     )
     parser.add_argument("--workspace", default=ou.DEFAULT_WORKSPACE)
     parser.add_argument("--profile", help="Chrome profile dir name, e.g. Default")
@@ -763,9 +1114,8 @@ def main() -> None:
         sys.exit(1)
 
     chartjs = load_chartjs()
-    html = TEMPLATE.replace("__CHARTJS__", chartjs or "").replace(
-        "__DATA__", json.dumps(data, ensure_ascii=False)
-    )
+    data_json = json.dumps(data, ensure_ascii=False).replace("<", "\\u003c")
+    html = TEMPLATE.replace("__CHARTJS__", chartjs or "").replace("__DATA__", data_json)
     Path(args.out).write_text(html, encoding="utf-8")
     print(f"written: {args.out} ({len(html):,} bytes)")
 

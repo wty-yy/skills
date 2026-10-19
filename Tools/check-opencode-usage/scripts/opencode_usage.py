@@ -27,7 +27,7 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -43,6 +43,7 @@ CHROME_ROOT = Path(
 TOKEN_FIELDS = ("inputTokens", "outputTokens", "reasoningTokens", "cacheReadTokens")
 KEY_CACHE = Path(__file__).parent / "key_cache.json"
 KEY_FETCH_BUDGET = 4
+KEY_CACHE_MAX_AGE = 365
 
 
 def get_keyring_secret() -> bytes:
@@ -171,6 +172,31 @@ def usage_range(days: int) -> str:
     return "90d"
 
 
+def parse_utc_day(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp.astimezone(timezone.utc).date()
+
+
+def subscription_span(
+    quota: dict, today: date, fallback_days: int = 14
+) -> tuple[date, date]:
+    start = parse_utc_day(quota.get("startsAt"))
+    end = parse_utc_day(quota.get("endsAt"))
+    if start and end and start <= end and start <= today:
+        last = min(today, end)
+        if (last - start).days >= 90:
+            start = last - timedelta(days=89)
+        return start, last
+    return today - timedelta(days=fallback_days - 1), today
+
+
 def fetch_usage(days: int, header_sets: list[dict]) -> list[dict]:
     body = call_api(
         "/v2/usage/export", {"range": usage_range(days)}, header_sets, raw=True
@@ -290,6 +316,12 @@ def fetch_day_keys(day: str, header_sets: list[dict]) -> dict[str, dict]:
 def fetch_key_stats(
     cutoff: date, today: date, header_sets: list[dict], budget: int = KEY_FETCH_BUDGET
 ) -> tuple[dict, str | None]:
+    """Aggregate per-key stats over the window, backfilling at most `budget` days.
+
+    Days already present in key_cache.json are never re-downloaded (today is
+    always refreshed), and the cache keeps KEY_CACHE_MAX_AGE days regardless of
+    the report window so switching periods does not re-fetch history.
+    """
     cache = load_key_cache()
     days_cache = cache.setdefault("days", {})
     days = [
@@ -314,7 +346,7 @@ def fetch_key_stats(
         }
         fetched += 1
     for iso in list(days_cache):
-        if iso < cutoff.isoformat():
+        if iso < (today - timedelta(days=KEY_CACHE_MAX_AGE)).isoformat():
             del days_cache[iso]
     save_key_cache(cache)
 
