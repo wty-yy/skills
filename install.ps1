@@ -8,6 +8,7 @@ param(
     [string[]]$Agents = @('all'),
 
     [switch]$Yes,
+    [switch]$GlobalInstructions,
     [switch]$Help
 )
 
@@ -16,22 +17,33 @@ $ErrorActionPreference = 'Stop'
 
 function Show-Usage {
     @'
-Usage: .\install.cmd <install|uninstall> [claude|codex|opencode|all ...] [-Yes]
-       .\install.ps1 <install|uninstall> [claude|codex|opencode|all ...] [-Yes]
+Usage: .\install.cmd <install|uninstall> [claude|codex|opencode|all ...] [-Yes] [-GlobalInstructions]
+       .\install.ps1 <install|uninstall> [claude|codex|opencode|all ...] [-Yes] [-GlobalInstructions]
 
 Discover skill directories recursively and group by relative parent directory.
 No agent argument selects all three agents. Install opens a numbered checklist;
 enter a skill or category number to toggle it, a for all, n for none, Enter to
 apply, or q to cancel. Installed repository skills are selected by default.
 Use -Yes to skip selection and install every skill.
+Select global instructions to replace the existing file with a symlink to this
+repository's AGENTS.md. -GlobalInstructions preselects this option; combine with
+-Yes to install it directly. -Yes alone leaves global instructions unchanged.
+Deselecting or uninstalling removes only this repository's instruction links.
 
 Default destinations (relative to your user profile):
   claude    .claude\skills
   codex     .codex\skills
   opencode  .config\opencode\skills
 
+Default global instruction files:
+  claude    .claude\CLAUDE.md
+  codex     .codex\AGENTS.md
+  opencode  .config\opencode\AGENTS.md
+
 Overrides: SKILLS_INSTALL_HOME, CLAUDE_CONFIG_DIR, CODEX_HOME, XDG_CONFIG_HOME.
 Windows creates directory junctions; other platforms use symbolic links.
+Global instructions use file symlinks, which require Developer Mode or an
+elevated terminal on Windows.
 Keep the checkout in a permanent location. Windows requires a local filesystem
 that supports junctions. Selected skills replace same-named destination items.
 Uninstall removes only this repository's links, including broken links.
@@ -98,6 +110,58 @@ function Get-RepoLinkTarget($Item) {
     return $null
 }
 
+function Get-InstructionsFile([string]$Agent) {
+    $config = Split-Path -Parent (Get-SkillsDirectory $Agent)
+    $name = if ($Agent -eq 'claude') { 'CLAUDE.md' } else { 'AGENTS.md' }
+    Get-NormalPath (Join-Path $config $name)
+}
+
+function Test-InstructionsLink($Item) {
+    if ($null -eq $Item -or $Item.LinkType -ne 'SymbolicLink') { return $false }
+    $target = @($Item.Target)[0]
+    if (-not $target) { return $false }
+    if (-not [IO.Path]::IsPathRooted($target)) {
+        $target = Join-Path (Split-Path -Parent $Item.FullName) $target
+    }
+    Test-SamePath (Get-NormalPath $target) (Join-Path $repoRoot 'AGENTS.md')
+}
+
+function Set-InstructionsLink([string]$Agent, [string]$Destination, [bool]$Selected) {
+    $existing = Get-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
+    if (-not $Selected) {
+        if (Test-InstructionsLink $existing) {
+            Remove-Destination $existing
+            Write-Host "[$Agent] Removed: $Destination"
+        }
+        return
+    }
+    if (Test-InstructionsLink $existing) {
+        Write-Host "[$Agent] Already linked: $Destination"
+        return
+    }
+    $source = Join-Path $repoRoot 'AGENTS.md'
+    if (Test-SamePath $Destination $source) {
+        throw "Refusing to replace the source instructions: $Destination"
+    }
+    if ($null -ne $existing -and $existing.PSIsContainer -and
+        -not ($existing.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw "Refusing to replace an instructions directory: $Destination"
+    }
+    $directory = Split-Path -Parent $Destination
+    [IO.Directory]::CreateDirectory($directory) | Out-Null
+    $temporary = Join-Path $directory ('.instructions-' + [guid]::NewGuid().ToString('N'))
+    try {
+        # Check file-symlink privileges before removing an existing file.
+        New-Item -Path $temporary -ItemType SymbolicLink -Value $source | Out-Null
+        if ($null -ne $existing) { Remove-Destination $existing }
+        Move-Item -LiteralPath $temporary -Destination $Destination
+    } finally {
+        $pending = Get-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        if ($null -ne $pending) { Remove-Destination $pending }
+    }
+    Write-Host "[$Agent] Linked: $Destination -> $source"
+}
+
 function New-SelectionItem([string]$Source, [bool]$Selected, [string]$Status) {
     $relative = $Source.Substring($repoPrefix.Length)
     $category = Split-Path -Parent $relative
@@ -111,7 +175,15 @@ function New-SelectionItem([string]$Source, [bool]$Selected, [string]$Status) {
     }
 }
 
-function Get-Selection([string]$TargetDirectory) {
+function Get-Selection([string]$TargetDirectory, [string]$Instructions) {
+    $existing = Get-Item -LiteralPath $Instructions -Force -ErrorAction SilentlyContinue
+    $linked = Test-InstructionsLink $existing
+    $status = if ($linked) { 'Installed' } elseif ($null -ne $existing) { '' } else { 'Not installed' }
+    $item = New-SelectionItem (Join-Path $repoRoot 'AGENTS.md') ($linked -or $GlobalInstructions) $status
+    $item.Category = ''
+    $item.Name = "AGENTS.md -> $Instructions (replaces file)"
+    $item
+
     foreach ($skill in $skills) {
         $destination = Join-Path $TargetDirectory $skill.Name
         $existing = Get-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue
@@ -120,7 +192,7 @@ function Get-Selection([string]$TargetDirectory) {
         } elseif (Get-RepoLinkTarget $existing) {
             New-SelectionItem $skill.FullName $true 'Installed'
         } elseif ($null -ne $existing) {
-            New-SelectionItem $skill.FullName $false 'Name conflict; select to replace'
+            New-SelectionItem $skill.FullName $false ''
         } else {
             New-SelectionItem $skill.FullName $false 'Not installed'
         }
@@ -140,7 +212,14 @@ function Select-Skills([object[]]$Items, [string]$Agent, [string]$TargetDirector
         Write-Host "`nSkill selection - $Agent`nDirectory: $TargetDirectory"
         $rows = @{}
         $number = 0
-        foreach ($group in $Items | Group-Object Category | Sort-Object Name) {
+        foreach ($item in $Items | Where-Object { -not $_.Category }) {
+            $number++
+            $rows[$number] = @($item)
+            $marker = if ($item.Selected) { 'x' } else { ' ' }
+            $status = if ($item.Status) { " ($($item.Status))" } else { '' }
+            Write-Host ("{0,3}. [{1}] {2}{3}" -f $number, $marker, $item.Name, $status)
+        }
+        foreach ($group in $Items | Where-Object Category | Group-Object Category | Sort-Object Name) {
             $children = @($group.Group)
             $checked = @($children | Where-Object Selected).Count
             $marker = if ($checked -eq $children.Count) { 'x' } elseif ($checked) { '-' } else { ' ' }
@@ -151,7 +230,8 @@ function Select-Skills([object[]]$Items, [string]$Agent, [string]$TargetDirector
                 $number++
                 $rows[$number] = @($item)
                 $marker = if ($item.Selected) { 'x' } else { ' ' }
-                Write-Host ("{0,3}.   [{1}] {2} ({3})" -f $number, $marker, $item.Name, $item.Status)
+                $status = if ($item.Status) { " ($($item.Status))" } else { '' }
+                Write-Host ("{0,3}.   [{1}] {2}{3}" -f $number, $marker, $item.Name, $status)
             }
         }
         $choice = (Read-Host 'Number: toggle | a: all | n: none | Enter: apply | q: cancel').Trim()
@@ -191,6 +271,9 @@ function Remove-Destination($Item) {
 
 try {
     if ($Help -or $Action -eq 'help') { Show-Usage; return }
+    if ($Action -eq 'uninstall' -and $GlobalInstructions) {
+        throw '-GlobalInstructions is an install option; uninstall already removes owned instruction links.'
+    }
     $windowsPlatform = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
     $pathComparison = if ($windowsPlatform) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
     $repoRoot = Get-NormalPath $PSScriptRoot
@@ -212,13 +295,20 @@ try {
     }
     $skillNames = @{}
     $skills = @()
-    if ($Action -eq 'install') { $skills = @(Get-Skills $repoRoot $skillNames) }
+    if ($Action -eq 'install') {
+        if (-not (Test-Path -LiteralPath (Join-Path $repoRoot 'AGENTS.md') -PathType Leaf)) {
+            throw "Missing source: $repoRoot/AGENTS.md"
+        }
+        $skills = @(Get-Skills $repoRoot $skillNames)
+    }
 
     foreach ($agent in $selectedAgents) {
         $targetDirectory = Get-SkillsDirectory $agent
+        $instructions = Get-InstructionsFile $agent
         $installed = 0
         $removed = 0
         if ($Action -eq 'uninstall') {
+            Set-InstructionsLink $agent $instructions $false
             if (Test-Path -LiteralPath $targetDirectory -PathType Container) {
                 foreach ($existing in Get-ChildItem -LiteralPath $targetDirectory -Force) {
                     if (Get-RepoLinkTarget $existing) {
@@ -232,16 +322,24 @@ try {
             continue
         }
 
-        $items = @(Get-Selection $targetDirectory)
+        $items = @(Get-Selection $targetDirectory $instructions)
         if ($items.Count -eq 0) { throw "No repository skills found in $repoRoot or $targetDirectory" }
         if ($Yes) {
-            foreach ($item in $items) { $item.Selected = $true }
+            foreach ($item in $items) {
+                $item.Selected = if (Test-SamePath $item.Source (Join-Path $repoRoot 'AGENTS.md')) { [bool]$GlobalInstructions } else { $true }
+            }
         } elseif (-not (Select-Skills $items $agent $targetDirectory)) {
             Write-Host "[$agent] Cancelled; no changes applied to this agent."
             return
         }
 
         foreach ($item in $items) {
+            if (Test-SamePath $item.Source (Join-Path $repoRoot 'AGENTS.md')) {
+                if (-not $Yes -or $GlobalInstructions) {
+                    Set-InstructionsLink $agent $instructions $item.Selected
+                }
+                continue
+            }
             $destination = Join-Path $targetDirectory $item.Name
             $existing = Get-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue
             $linkedSource = Get-RepoLinkTarget $existing

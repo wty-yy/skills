@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<meta content="#0d1019" name="theme-color"/>
+<meta content="跨设备 AI Token 用量、贡献记录、模型分析与设备状态。" name="description"/>
+<title>Token Usage</title>
+<link href="/favicon.svg" rel="icon" type="image/svg+xml"/>
+<link as="font" crossorigin="" href="/figtree.woff2" rel="preload" type="font/woff2"/>
+<link href="/style.css" rel="stylesheet"/>
+<script defer="" src="/app.js"></script>
+</head>
+<body>
+<nav aria-label="选择用户" class="top-nav"><div id="user-tabs"><button class="active" data-i18n="OVERVIEW" data-user="all">OVERVIEW</button></div><span class="live-indicator"><i></i><span data-i18n="LIVE SYNC">LIVE SYNC</span></span></nav>
+<main>
+<section aria-label="用量资料" class="profile-card">
+<div class="profile-top">
+<div class="profile-avatar" id="profile-avatar">T</div>
+<div class="profile-info"><h1 id="profile-name">Token Usage</h1><div class="handle" data-i18n="All users · AI usage tracker" id="profile-handle">All users · AI usage tracker</div><div class="profile-meta"><span class="meta-badge" data-i18n="MULTI-DEVICE">MULTI-DEVICE</span><span id="profile-meta">等待同步</span><span id="updated-at"></span></div></div>
+<div class="profile-actions"><button class="primary-button" id="refresh">↻ <span data-i18n="Refresh">Refresh</span></button><button class="quiet-button" id="share">↗ <span data-i18n="Share">Share</span></button><button class="quiet-button" id="language-toggle">中文</button><button class="quiet-button" id="theme-toggle">☀</button></div>
+</div>
+<dl class="profile-stats">
+<div><dt data-i18n="All-time tokens">All-time tokens</dt><dd id="summary-tokens">—</dd></div>
+<div><dt data-i18n="All-time cost">All-time cost</dt><dd id="summary-cost">—</dd></div>
+<div><dt><span data-i18n="Active days">Active days</span><small data-i18n="(1y)">(1y)</small></dt><dd id="summary-days">—</dd></div>
+<div><dt data-i18n="Devices">Devices</dt><dd id="summary-devices">—</dd></div>
+</dl>
+</section>
+<div class="view-toolbar">
+<div aria-label="数据视图" class="segmented section-tabs" role="tablist"><button aria-selected="true" class="active" data-i18n="Usage" data-tab="usage" id="tab-usage" role="tab">Usage</button><button aria-selected="false" data-i18n="Models" data-tab="models" id="tab-models" role="tab">Models</button></div>
+<div aria-label="用量时间范围" class="segmented range-tabs" role="group"><button class="active" data-i18n="Lifetime" data-period="lifetime">Lifetime</button><button data-i18n="30d" data-period="30d">30d</button><button data-i18n="7d" data-period="7d">7d</button><button data-i18n="This month" data-period="month">This month</button><button data-i18n="Last month" data-period="last-month">Last month</button></div>
+</div>
+<div aria-live="polite" class="notice" hidden="" id="notice" role="status"></div>
+<div aria-labelledby="tab-usage" id="usage-view" role="tabpanel">
+<div class="usage-grid">
+<div class="left-column">
+<section class="panel contributions">
+<div class="panel-heading"><div><div class="heading-inline"><h2 data-i18n="Contributions">Contributions</h2><select aria-label="Contribution date range" id="heat-year"><option data-i18n="Recent year" value="recent">Recent year</option></select></div><p data-i18n="Daily contribution density across the latest 12 months.">Daily contribution density across the latest 12 months.</p></div><div class="contribution-controls"><div class="segmented tiny"><button class="active" data-view="2d">2D</button><button data-view="3d">3D</button></div><div class="active-meta"><strong id="heat-active">0 active days</strong><span id="heat-range"></span></div></div></div>
+<div class="heat-scroll"><div class="heat-months" id="heat-months"></div><div class="heat-layout"><div class="week-labels"><span data-i18n="Mon">Mon</span><span data-i18n="Wed">Wed</span><span data-i18n="Fri">Fri</span></div><div aria-label="Daily token contributions" class="heatmap" id="heatmap" role="grid"></div></div><svg aria-label="3D token contributions" hidden="" id="heat-3d" role="img" viewbox="0 0 660 170"></svg></div>
+<div class="heat-footer"><label><span data-i18n="Color">Color</span><span class="palette-preview" id="palette-preview"></span><select aria-label="Contribution graph color" id="heat-color"><option data-i18n="Blue" value="Blue">Blue</option><option data-i18n="Green" value="Green">Green</option><option data-i18n="Teal" value="Teal">Teal</option><option data-i18n="Purple" value="Purple">Purple</option><option data-i18n="Pink" value="Pink">Pink</option><option data-i18n="Orange" value="Orange">Orange</option><option data-i18n="Monochrome" value="Monochrome">Monochrome</option></select></label><div class="intensity"><span data-i18n="Low">Low</span><span id="heat-scale"></span><span data-i18n="High">High</span></div></div>
+</section>
+<section class="panel day-panel">
+<div class="day-heading"><span class="eyebrow" data-i18n="DAY BREAKDOWN">DAY BREAKDOWN</span><h3 id="day-title">—</h3></div>
+<dl class="day-stats"><div><dt data-i18n="Total tokens">Total tokens</dt><dd id="day-tokens">0</dd></div><div><dt data-i18n="Cost">Cost</dt><dd id="day-cost">$0.00</dd></div><div><dt data-i18n="Messages">Messages</dt><dd id="day-messages">—</dd></div><div><dt data-i18n="Cache hit">Cache hit</dt><dd id="day-cache-hit">—</dd></div></dl>
+<div class="day-section"><h4 data-i18n="Token categories">Token categories</h4><div class="token-categories" id="day-categories"></div></div>
+<div class="day-section"><h4 data-i18n="Clients and models">Clients and models</h4><div class="day-breakdown" id="day-breakdown"></div></div>
+</section>
+</div>
+<div class="right-column">
+<section class="panel chart-panel">
+<div class="panel-heading"><div><h2 data-i18n="Usage over time">Usage over time</h2><p id="chart-description">Model activity for the latest 12 months, grouped by provider.</p></div><div class="range-total"><span data-i18n="Range total tokens" id="range-total-label">Range total tokens</span><strong id="range-total">—</strong></div></div>
+<div class="chart-controls"><div class="segmented tiny"><button class="active" data-i18n="Tokens" data-metric="tokens">Tokens</button><button data-i18n="Cost" data-metric="cost">Cost</button></div><label class="display-label"><span data-i18n="Display">Display</span><select aria-label="Usage display" id="chart-display"><option data-i18n="30d average" value="average">30d average</option><option data-i18n="Daily" value="daily">Daily</option></select></label><label class="newest-first"><input id="newest-first" type="checkbox"/><span data-i18n="Newest first">Newest first</span></label><label class="provider-label"><span data-i18n="Provider">Provider</span><select aria-label="Usage provider" id="chart-provider"><option data-i18n="All" value="all">All</option></select></label></div>
+<div class="chart-container"><svg aria-label="Interactive usage chart" id="usage-chart" role="img" viewbox="0 0 750 260"></svg><div class="chart-tooltip" hidden="" id="chart-tooltip"></div><div class="chart-empty" hidden="" id="chart-empty" data-i18n="Waiting for device usage">Waiting for device usage</div></div>
+<div class="chart-dates"><span id="chart-start"></span><span id="chart-end"></span></div>
+<div class="chart-legend" id="chart-legend"></div>
+</section>
+<section class="panel details-panel"><div class="details-heading"><h2 data-i18n="Usage details">Usage details</h2><span data-i18n="Scope is shown for each fact.">Scope is shown for each fact.</span></div><dl class="usage-details"><div><dt><span data-i18n="Favorite model">Favorite model</span><small data-i18n="(1y)">(1y)</small></dt><dd id="favorite-model">—</dd></div><div><dt><span data-i18n="Tools">Tools</span><small data-i18n="(latest)">(latest)</small></dt><dd id="tools-count">0</dd></div><div><dt><span data-i18n="Models">Models</span><small data-i18n="(latest)">(latest)</small></dt><dd id="models-count">0</dd></div></dl><div class="providers-row"><span><span data-i18n="Providers">Providers</span><br/><small data-i18n="(latest)">(latest)</small></span><div class="tool-tags" id="tool-tags"></div></div></section>
+<section class="panel mix-panel"><div class="panel-heading"><div><h2 data-i18n="Token mix">Token mix</h2><p data-i18n="Distribution across input, output and cache tokens.">Distribution across input, output and cache tokens.</p></div></div><div class="mix-content"><div class="mix-donut" id="mix-donut"><div><strong id="mix-total">0</strong><span>TOKENS</span></div></div><dl class="mix-legend" id="mix-legend"></dl></div></section>
+</div>
+</div>
+</div>
+<section aria-labelledby="tab-models" hidden="" id="models-view" role="tabpanel"><div class="table-scroll"><table class="models-table"><thead><tr><th data-i18n="Model">Model</th><th data-i18n="Tokens">Tokens</th><th data-i18n="Cost">Cost</th><th data-i18n="Cache hit">Cache hit</th><th data-i18n="Share (cost)">Share (cost)</th></tr></thead><tbody id="models-list"></tbody></table></div><div class="empty-state" data-i18n="No model usage for this range." hidden="" id="models-empty">No model usage for this range.</div></section>
+<section class="panel devices-panel"><div class="details-heading"><h2 data-i18n="Devices · all-time">Devices · all-time</h2><span id="devices-total"></span></div><div class="table-scroll"><table class="devices-table"><thead><tr><th data-i18n="Device">Device</th><th data-i18n="User">User</th><th data-i18n="Status">Status</th><th data-i18n="Tokens">Tokens</th><th data-i18n="Cost">Cost</th><th data-i18n="Active days">Active days</th></tr></thead><tbody id="devices-list"></tbody></table></div><div class="empty-state" hidden="" id="devices-empty" data-i18n="Waiting for first sync">Waiting for first sync</div></section>
+<footer><span>Token Usage</span><div><span data-i18n="Public · read only">Public · read only</span><span data-i18n="Cost is estimated">Cost is estimated</span><span id="display-timezone">Asia/Shanghai</span><span data-i18n="Auto-refresh 30s">Auto-refresh 30s</span></div></footer>
+</main>
+</body>
+</html>
+

@@ -1,0 +1,12 @@
+node_modules/
+config/
+.env
+data/
+backups/
+logs/
+runtime/
+vendor/
+deploy/tls/
+deploy/acme/
+*.pid
+*.tar.gz

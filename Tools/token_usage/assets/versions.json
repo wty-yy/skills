@@ -1,0 +1,9 @@
+{
+  "node": "22.22.2",
+  "upstream": {
+    "repository": "Javis603/token-monitor",
+    "commit": "6eaefabe1966d7e70afde034e9f3c2518ce705bf",
+    "binary_base": "4.20.0",
+    "bundle_sha256": "91d2da9e1e970487d7c73895785b6fc48e37212aef4a42e2d3d8f887035f9e3c"
+  }
+}

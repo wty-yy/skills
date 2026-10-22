@@ -19,28 +19,40 @@ print_message() {
 usage() {
     if [[ "$ui_language" == zh ]]; then
         cat <<'EOF'
-用法：./install.sh <install|uninstall> [claude|codex|opencode|all ...] [--yes]
+用法：./install.sh <-i|--install|-r|--remove> [claude|codex|opencode|all ...] [--yes] [--global-instructions]
+
+  -i, --install  安装
+  -r, --remove   卸载
 
 递归管理仓库内带有 SKILL.md 的目录，按相对父目录自动分类。
 推荐布局：<类别>/<skill>/SKILL.md；根目录下的 skill 显示为 Uncategorized。
 未指定 agent 时，默认选择全部三个 agent。
-install 打开选择界面，默认勾选已安装的本仓库 skill。
+--install 打开选择界面，默认勾选已安装的本仓库 skill。
 按类别显示为树形列表，类别行可整组勾选或取消；[-] 表示部分选中。
 按空格切换勾选，Enter 安装勾选项并移除取消勾选的本仓库链接。
 按 q 或 Esc 取消，不应用当前选择。
 使用 --yes 跳过选择界面，安装全部 skill。
+选择界面包含全局指令文件选项，选中后以符号链接替换现有文件。
+使用 --global-instructions 预选该选项；配合 --yes 可直接安装该链接。
+单独使用 --yes 不修改全局指令文件。取消勾选或卸载只移除本仓库链接。
 
 示例：
-  ./install.sh install codex
-  ./install.sh install claude opencode
-  ./install.sh install all
-  ./install.sh install codex --yes
-  ./install.sh uninstall all
+  ./install.sh -i codex
+  ./install.sh --install claude opencode
+  ./install.sh --install all
+  ./install.sh -i codex --yes
+  ./install.sh -i codex --yes --global-instructions
+  ./install.sh -r all
 
 默认安装目录：
   claude    ~/.claude/skills
   codex     ~/.codex/skills
   opencode  ~/.config/opencode/skills
+
+全局指令文件（链接到本仓库 AGENTS.md）：
+  claude    ~/.claude/CLAUDE.md
+  codex     ~/.codex/AGENTS.md
+  opencode  ~/.config/opencode/AGENTS.md
 
 环境变量：
   SKILLS_INSTALL_HOME  自定义默认安装路径所用的用户目录。
@@ -56,30 +68,43 @@ install 打开选择界面，默认勾选已安装的本仓库 skill。
 EOF
     else
         cat <<'EOF'
-Usage: ./install.sh <install|uninstall> [claude|codex|opencode|all ...] [--yes]
+Usage: ./install.sh <-i|--install|-r|--remove> [claude|codex|opencode|all ...] [--yes] [--global-instructions]
+
+  -i, --install  Install
+  -r, --remove   Uninstall
 
 Recursively discover skill directories containing SKILL.md in this repository.
 Group by relative parent directory: <category>/<skill>/SKILL.md.
 Skills directly at the repository root appear under Uncategorized.
 If no agent is specified, all three agents are selected.
-Install opens a checklist with this repository's installed skills selected.
+--install opens a checklist with this repository's installed skills selected.
 Skills are grouped in a tree. Toggle a category to select or deselect all its
 skills. [-] indicates a partially selected category.
 Press Space to toggle a skill and Enter to install selected skills and remove
 deselected repository links. Press q or Escape to cancel without applying.
 Use --yes to install all skills without opening the checklist.
+The checklist includes global instructions; selecting replaces the existing file
+with a symlink. Use --global-instructions to preselect it, or combine with --yes
+to install the link directly. --yes alone leaves global instructions unchanged.
+Deselecting or uninstalling removes only this repository's instruction links.
 
 Examples:
-  ./install.sh install codex
-  ./install.sh install claude opencode
-  ./install.sh install all
-  ./install.sh install codex --yes
-  ./install.sh uninstall all
+  ./install.sh -i codex
+  ./install.sh --install claude opencode
+  ./install.sh --install all
+  ./install.sh -i codex --yes
+  ./install.sh -i codex --yes --global-instructions
+  ./install.sh -r all
 
 Default destinations:
   claude    ~/.claude/skills
   codex     ~/.codex/skills
   opencode  ~/.config/opencode/skills
+
+Global instructions (symlinks to this repository's AGENTS.md):
+  claude    ~/.claude/CLAUDE.md
+  codex     ~/.codex/AGENTS.md
+  opencode  ~/.config/opencode/AGENTS.md
 
 Environment:
   SKILLS_INSTALL_HOME  Override the home directory for default destinations.
@@ -112,6 +137,53 @@ skills_dir() {
     esac
 }
 
+instructions_file() {
+    local config_dir
+    config_dir="$(skills_dir "$1")"
+    config_dir="${config_dir%/skills}"
+    case "$1" in
+        claude) printf '%s/CLAUDE.md\n' "$config_dir" ;;
+        *) printf '%s/AGENTS.md\n' "$config_dir" ;;
+    esac
+}
+
+is_instructions_link() {
+    local destination="$1" source parent
+    [[ -L "$destination" ]] || return 1
+    source="$(readlink -- "$destination")"
+    [[ "$source" == /* ]] || source="${destination%/*}/$source"
+    parent="${source%/*}"
+    if [[ -d "$parent" ]]; then
+        source="$(cd -- "$parent" && pwd -P)/${source##*/}"
+    fi
+    [[ "$source" == "$repo_root/AGENTS.md" ]]
+}
+
+apply_instructions() {
+    local agent="$1" destination="$2" selected="$3"
+    if [[ "$selected" -eq 0 ]]; then
+        if is_instructions_link "$destination"; then
+            rm -- "$destination"
+            print_message '[%s] Removed: %s\n' '[%s] 已移除：%s\n' "$agent" "$destination"
+        fi
+        return 0
+    fi
+    if is_instructions_link "$destination"; then
+        print_message '[%s] Already linked: %s\n' '[%s] 已链接：%s\n' "$agent" "$destination"
+        return 0
+    fi
+    [[ ! -d "$destination" || -L "$destination" ]] || die \
+        'Refusing to replace an instructions directory: %s' '拒绝覆盖指令路径上的目录：%s' "$destination"
+    [[ ! "$destination" -ef "$repo_root/AGENTS.md" ]] || die \
+        'Refusing to replace the source instructions: %s' '拒绝覆盖源指令文件：%s' "$destination"
+    mkdir -p -- "${destination%/*}"
+    if [[ -e "$destination" || -L "$destination" ]]; then
+        rm -- "$destination"
+    fi
+    ln -s -- "$repo_root/AGENTS.md" "$destination"
+    print_message '[%s] Linked: %s -> %s\n' '[%s] 已创建链接：%s -> %s\n' "$agent" "$destination" "$repo_root/AGENTS.md"
+}
+
 repo_link_source() {
     local destination="$1"
     local source parent
@@ -141,7 +213,8 @@ discover_skills() {
     for source in "$directory"/*; do
         [[ -d "$source" && ! -L "$source" ]] || continue
         if [[ -f "$source/SKILL.md" ]]; then
-            for existing in "${skills[@]}"; do
+            # Bash 3.2 treats an empty array as unset under set -u.
+            for existing in ${skills[@]+"${skills[@]}"}; do
                 [[ "${existing##*/}" != "${source##*/}" ]] || die \
                     'Duplicate skill name: %s and %s' 'skill 名称重复：%s 和 %s' "$existing" "$source"
             done
@@ -153,13 +226,13 @@ discover_skills() {
 }
 
 collect_selection() {
-    local target_dir="$1"
+    local target_dir="$1" instructions="$2"
     local source destination existing found
     items=()
     selected=()
     statuses=()
 
-    for source in "${skills[@]}"; do
+    for source in ${skills[@]+"${skills[@]}"}; do
         items+=("$source")
         destination="$target_dir/${source##*/}"
         if is_source_directory "$destination" "$source"; then
@@ -181,7 +254,7 @@ collect_selection() {
     for destination in "$target_dir"/*; do
         source="$(repo_link_source "$destination")" || continue
         found=false
-        for existing in "${skills[@]}"; do
+        for existing in ${skills[@]+"${skills[@]}"}; do
             if [[ "${existing##*/}" == "${destination##*/}" ]]; then
                 found=true
                 break
@@ -192,6 +265,19 @@ collect_selection() {
         selected+=(1)
         statuses+=(stale)
     done
+
+    items+=("$repo_root/AGENTS.md")
+    if is_instructions_link "$instructions"; then
+        selected+=(1)
+        statuses+=(installed)
+    else
+        if [[ "$global_instructions" == true ]]; then selected+=(1); else selected+=(0); fi
+        if [[ -e "$instructions" || -L "$instructions" ]]; then
+            statuses+=(conflict)
+        else
+            statuses+=(available)
+        fi
+    fi
 }
 
 build_tree() {
@@ -205,18 +291,25 @@ build_tree() {
     for index in "${!items[@]}"; do
         relative="${items[index]#"$repo_root/"}"
         case "$relative" in
+            AGENTS.md)
+                item_categories[index]=''
+                tree_items+=("$index")
+                tree_categories+=('')
+                tree_last_children+=(0)
+                continue
+                ;;
             */*) category="${relative%/*}" ;;
             *) category=Uncategorized ;;
         esac
         item_categories[index]="$category"
         found=false
-        for existing in "${categories[@]}"; do
+        for existing in ${categories[@]+"${categories[@]}"}; do
             [[ "$existing" != "$category" ]] || found=true
         done
         [[ "$found" == true ]] || categories+=("$category")
     done
 
-    for category in "${categories[@]}"; do
+    for category in ${categories[@]+"${categories[@]}"}; do
         last_child=-1
         for index in "${!items[@]}"; do
             [[ ${item_categories[index]} == "$category" ]] || continue
@@ -255,7 +348,7 @@ restore_terminal() {
 
 choose_skills() {
     local agent="$1" target_dir="$2"
-    local cursor=0 start=0 end index item checked marker label key sequence
+    local cursor=0 start=0 end index item checked marker label key sequence name
     local category category_total category_checked child prefix
     local terminal_rows terminal_columns page_size
 
@@ -315,15 +408,24 @@ choose_skills() {
             case "${statuses[item]}" in
                 installed) label="$(print_message 'Installed' '已安装')" ;;
                 available) label="$(print_message 'Not installed' '未安装')" ;;
-                conflict) label="$(print_message 'Name conflict; select to replace' '同名项，选中后覆盖')" ;;
+                conflict) label='' ;;
                 stale) label="$(print_message 'Installed; source skill removed' '已安装，源 skill 已删除')" ;;
                 source) label="$(print_message 'Source directory; cannot uninstall' '源目录，保留且不可卸载')" ;;
             esac
             prefix='├─'
             [[ ${tree_last_children[index]} -eq 0 ]] || prefix='└─'
-            printf '   %s [%s] %s  (%s)\033[0m\n' "$prefix" "$marker" "${items[item]##*/}" "$label"
+            name="${items[item]##*/}"
+            if [[ "${items[item]}" == "$repo_root/AGENTS.md" ]]; then
+                name="$(print_message 'AGENTS.md -> %s (replaces file)' 'AGENTS.md -> %s（覆盖现有文件）' "$(instructions_file "$agent")")"
+            fi
+            [[ -z "$label" ]] || name+="  ($label)"
+            if [[ "${items[item]}" == "$repo_root/AGENTS.md" ]]; then
+                printf ' [%s] %s\033[0m\n' "$marker" "$name"
+            else
+                printf '   %s [%s] %s\033[0m\n' "$prefix" "$marker" "$name"
+            fi
         done
-        print_message '\nSelected skills will be installed; deselected repository links will be removed.\n' '\n勾选项会安装；取消勾选的本仓库链接会删除。\n'
+        print_message '\nSelected items will be linked; deselected repository links will be removed.\n' '\n勾选项会创建链接；取消勾选的本仓库链接会删除。\n'
 
         key=''
         if ! IFS= read -rsn1 key; then
@@ -376,7 +478,8 @@ choose_skills() {
 
 case "${1:-}" in
     ''|-h|--help) usage; exit 0 ;;
-    install|uninstall) action="$1"; shift ;;
+    -i|--install) action=install; shift ;;
+    -r|--remove) action=uninstall; shift ;;
     *) usage >&2; die 'Unknown action: %s' '未知操作：%s' "$1" ;;
 esac
 
@@ -387,15 +490,20 @@ fi
 # Validate every agent before making any changes.
 agents=()
 non_interactive=false
+global_instructions=false
 for agent in "$@"; do
     case "$agent" in
         all) agents+=(claude codex opencode) ;;
         claude|codex|opencode) agents+=("$agent") ;;
         -y|--yes) non_interactive=true ;;
+        --global-instructions) global_instructions=true ;;
         -h|--help) usage; exit 0 ;;
         *) die 'Unknown agent: %s (supported: claude, codex, opencode, all)' '未知 agent：%s（支持 claude、codex、opencode、all）' "$agent" ;;
     esac
 done
+if [[ "$action" == uninstall && "$global_instructions" == true ]]; then
+    die '--global-instructions requires --install; --remove already removes owned instruction links.' '--global-instructions 仅用于 --install；--remove 会自动移除本仓库的指令链接。'
+fi
 if [[ ${#agents[@]} -eq 0 ]]; then
     agents=(claude codex opencode)
 fi
@@ -410,11 +518,16 @@ shopt -s nullglob
 
 skills=()
 if [[ "$action" == install ]]; then
+    [[ -f "$repo_root/AGENTS.md" ]] || die 'Missing source: %s/AGENTS.md' '缺少源文件：%s/AGENTS.md' "$repo_root"
     discover_skills "$repo_root"
 fi
 
 for agent in "${agents[@]}"; do
     target_dir="$(skills_dir "$agent")"
+    instructions="$(instructions_file "$agent")"
+    if [[ "$action" == uninstall ]]; then
+        apply_instructions "$agent" "$instructions" 0
+    fi
     if [[ "$action" == uninstall && ! -d "$target_dir" ]]; then
         print_message '[%s] Nothing to uninstall: %s\n' '[%s] 没有可卸载的 skill：%s\n' "$agent" "$target_dir"
         continue
@@ -425,10 +538,14 @@ for agent in "${agents[@]}"; do
     count=0
 
     if [[ "$action" == install ]]; then
-        collect_selection "$target_dir"
+        collect_selection "$target_dir" "$instructions"
         [[ ${#items[@]} -gt 0 ]] || die 'No repository skills found to manage in %s or %s' '%s 或 %s 中没有可管理的本仓库 skill' "$repo_root" "$target_dir"
         if [[ "$non_interactive" == true ]]; then
             for index in "${!items[@]}"; do
+                if [[ "${items[index]}" == "$repo_root/AGENTS.md" ]]; then
+                    if [[ "$global_instructions" == true ]]; then selected[index]=1; else selected[index]=0; fi
+                    continue
+                fi
                 selected[index]=1
             done
         else
@@ -442,6 +559,12 @@ for agent in "${agents[@]}"; do
         removed=0
         for index in "${!items[@]}"; do
             source="${items[index]}"
+            if [[ "$source" == "$repo_root/AGENTS.md" ]]; then
+                if [[ "$non_interactive" == false || "$global_instructions" == true ]]; then
+                    apply_instructions "$agent" "$instructions" "${selected[index]}"
+                fi
+                continue
+            fi
             name="${source##*/}"
             destination="$target_dir/$name"
 
