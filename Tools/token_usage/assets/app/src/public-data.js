@@ -23,7 +23,7 @@ function publicPeriod(value = {}) {
   };
 }
 
-function publicUser(user, hub, deviceName = () => '') {
+function publicUser(user, hub, deviceName = () => '', deviceHistory = () => undefined) {
   const stats = hub.getStats();
   const records = hub.getDevices();
   return {
@@ -41,6 +41,7 @@ function publicUser(user, hub, deviceName = () => '') {
       stale: device.stale,
       historyAvailable: records.find((record) => record.deviceId === device.deviceId)?.historyAvailable === true,
       activeDays: (record.history?.daily || []).filter((day) => day.tokens > 0).length,
+      history: deviceHistory(device.deviceId),
       periods: Object.fromEntries(PERIODS.map((period) => [period, publicPeriod(periods[period])]))
       };
     })

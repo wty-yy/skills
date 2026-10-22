@@ -17,11 +17,12 @@ python3 "$SKILL/scripts/manage.py" client \
 
 cd "$CLIENT"
 npm run preview
-npm run once
-npm start
+# 随后按下方「后台运行」启用自动上传与自启动
 ```
 
 `preview` 不上传，`once` 上传一次，`start` 监视文件变化并持续上传。首次启动检查固定的 Tokscale 原生二进制并按需下载、校验；Hub 本身不需要这一步。
+
+配置完成后默认继续安装并启用后台服务，不询问是否自动上传或上传频率。未指定频率时，已有安装保留 `.env` 中的设置，新安装使用上游默认 5 分钟周期并监听文件变化。用户指定频率时设置 `.env` 中的 `TOKEN_MONITOR_INTERVAL_MS`（毫秒）并重启服务；用户明确要求手动上传时才只使用 `npm run once`，不启用后台服务。
 
 安装从官方 GitHub 提交解析 `token-monitor` 依赖，并固定其兼容的 Tokscale 基础版本。`--omit=dev` 不安装 Electron。生成的 `package-lock.json` 留在客户端目录，不放入 skill。
 
@@ -50,6 +51,8 @@ systemctl --user start token-usage-agent
 如果需要退出登录后继续运行，检查 `loginctl show-user "$USER" -p Linger`，按本次任务需要启用该用户的 linger。服务使用 `Restart=always`，因为官方 agent 在 SIGTERM/SIGHUP 后正常退出，`on-failure` 不会重新启动它。
 
 macOS/Windows 使用相同 npm 客户端与 `.env`，持续运行交给 launchd 或 Task Scheduler；生成的 systemd 单元只用于 Linux。Node.js 路径变化后重新生成单元或调整 `ExecStart` 和 `PATH`。
+
+安装完成前确认后台服务正在运行、已设置自启动，并通过成功上传日志及 Hub 中的设备记录验证；不要只给用户留下待执行命令。
 
 ## 从桌面客户端迁移
 

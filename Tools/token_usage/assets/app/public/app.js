@@ -1,6 +1,8 @@
 'use strict';
 
 const ZH = {
+  "All devices": "全部设备",
+  "Device filter": "设备筛选",
   "OVERVIEW": "总览",
   "LIVE SYNC": "实时同步",
   "Mon": "周一",
@@ -32,6 +34,8 @@ const ZH = {
   "High": "多",
   "DAY BREAKDOWN": "单日明细",
   "Total tokens": "Token 总量",
+  "Total": "总量",
+  "Unattributed": "未归属",
   "Cost": "费用",
   "Messages": "消息数",
   "Token categories": "Token 构成",
@@ -60,6 +64,8 @@ const ZH = {
   "Devices · all-time": "设备 · 累计用量",
   "Device": "设备",
   "User": "用户",
+  "User usage": "用户使用量",
+  "User activity for the selected range.": "按用户查看所选范围内的使用趋势。",
   "Status": "状态",
   "Public · read only": "公开 · 只读",
   "Cost is estimated": "费用按模型价格估算",
@@ -123,12 +129,20 @@ const PALETTES = {
 const query = new URLSearchParams(location.search);
 const savedLanguage = localStorage.getItem('token-usage-language');
 const language = ['zh', 'en'].includes(savedLanguage) ? savedLanguage : /^zh/i.test(navigator.languages?.[0] || navigator.language) ? 'zh' : 'en';
-const state = { lang: language, theme: localStorage.getItem('token-usage-theme') === 'light' ? 'light' : 'dark', user: query.get('user') || 'all', tab: 'usage', period: 'lifetime', data: null, day: '', year: 'recent', heatView: '2d', color: 'Blue', metric: 'tokens', average: true, newest: false, provider: 'all', showAllLegend: false, fetching: false, chartRows: [] };
+const state = { lang: language, theme: localStorage.getItem('token-usage-theme') === 'light' ? 'light' : 'dark', user: query.get('user') || 'all', device: query.get('device') || 'all', modelSort: 'tokens', modelOrder: 'desc', tab: 'usage', period: '30d', data: null, day: '', year: 'recent', heatView: '2d', color: 'Blue', metric: 'tokens', average: false, newest: false, provider: 'all', showAllLegend: false, fetching: false, chartRows: [], chartPlot: { left: 42, width: 1 } };
 const timezone = () => state.data?.timeZone || 'Asia/Shanghai';
 const today = () => new Intl.DateTimeFormat('sv-SE', { timeZone: timezone(), year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const shift = (day, delta) => new Date(Date.parse(day + 'T12:00:00Z') + delta * 86400000).toISOString().slice(0, 10);
 const dateLabel = (day, long = false) => new Date(day + 'T12:00:00Z').toLocaleDateString(state.lang === 'zh' ? 'zh-CN' : 'en-US', long ? { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' } : { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
-const users = () => state.data.users.filter((user) => state.user === 'all' || user.id === state.user);
+const availableUsers = () => state.data.users.filter((user) => state.user === 'all' || user.id === state.user);
+const availableDevices = () => availableUsers().flatMap((user) => user.devices.map((device) => ({ ...device, owner: user.name })));
+function users() {
+  if (state.device === 'all') return availableUsers();
+  return availableUsers().flatMap((user) => {
+    const device = user.devices.find((entry) => entry.id === state.device);
+    return device ? [{ ...user, periods: device.periods, devices: [device] }] : [];
+  });
+}
 const sorted = (map) => Object.entries(map || {}).filter(([, value]) => value > 0).sort((a, b) => b[1] - a[1]);
 
 function color(name) {
@@ -137,10 +151,15 @@ function color(name) {
   return `hsl(${hue} ${48 + hash % 22}% ${45 + hash % 18}%)`;
 }
 
+const userColor = (id) => ['#3694ff', '#b287f4', '#38b7bb', '#ebaa64', '#e786ad'][state.data.users.findIndex((user) => user.id === id) % 5];
+const chartLabel = (label) => state.user === 'all' ? state.data.users.find((user) => user.id === label)?.name || label : LABELS[label] || t(label);
+const chartColor = (label) => state.user === 'all' ? userColor(label) : color(label);
+
 function mergeRows(selectedUsers = users()) {
   const result = new Map();
-  for (const user of selectedUsers) for (const source of state.data.history[user.id]?.daily || []) {
-    const row = result.get(source.date) || { date: source.date, tokens: 0, cost: 0, messages: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, unclassifiedTokens: 0, perClient: Object.create(null), perModel: Object.create(null) };
+  for (const user of selectedUsers) for (const source of (state.device === 'all' ? state.data.history[user.id]?.daily : user.devices[0]?.history?.daily) || []) {
+    const row = result.get(source.date) || { date: source.date, tokens: 0, cost: 0, messages: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, unclassifiedTokens: 0, perClient: Object.create(null), perModel: Object.create(null), perUser: Object.create(null) };
+    row.perUser[user.id] = source;
     for (const key of ['tokens', 'cost', 'messages', 'cacheReadTokens', 'cacheWriteTokens', 'outputTokens']) row[key] += source[key] || 0;
     row.unclassifiedTokens += source.unclassifiedTokens ?? source.tokens;
     for (const key of ['perClient', 'perModel']) for (const [label, entry] of Object.entries(source[key] || {})) {
@@ -211,6 +230,9 @@ function renderProfile() {
   $('summary-cost').textContent = all.unpricedTokens && !all.costUsd ? '—' : money(all.costUsd);
   $('summary-days').textContent = [...mergeRows()].filter(([date, row]) => date >= shift(today(), -364) && date <= today() && row.tokens > 0).length;
   $('summary-devices').textContent = devices.length; $('display-timezone').textContent = timezone();
+  $('device-select').innerHTML = `<option value="all">${t('All devices')}</option>` + availableDevices().map((device) => `<option value="${esc(device.id)}">${esc((state.user === 'all' ? device.owner + ' · ' : '') + device.name)}</option>`).join('');
+  $('device-select').value = state.device;
+  $('device-select').setAttribute('aria-label', t('Device filter'));
   document.title = (people ? 'Overview' : selected[0].name) + ' · Token Usage';
 }
 
@@ -228,21 +250,23 @@ function renderHeat() {
   const years = [...new Set([today().slice(0, 4), ...[...rows.keys()].map((date) => date.slice(0, 4))])].sort().reverse();
   $('heat-year').innerHTML = '<option value="recent">' + t('Recent year') + '</option>' + years.map((year) => `<option>${year}</option>`).join(''); $('heat-year').value = state.year;
   const peak = Math.max(0, ...days.map((date) => rows.get(date)?.tokens || 0));
-  let months = '', previous = '', cubes = '';
+  let months = '', previous = ''; const cubes = [];
   $('heatmap').innerHTML = days.map((date, index) => {
     const count = rows.get(date)?.tokens || 0, outside = date < start || date > end;
     const level = count > 0 ? Math.min(4, 1 + Math.floor(Math.sqrt(count / (peak || 1)) * 3)) : 0;
     if (index % 7 === 0) { const month = date.slice(0, 7); months += `<span>${month !== previous && (index > 0 || Number(date.slice(8)) <= 7) ? new Date(date + 'T12:00:00Z').toLocaleDateString(state.lang === 'zh' ? 'zh-CN' : 'en-US', { month: 'short', timeZone: 'UTC' }) : ''}</span>`; previous = month; }
     if (!outside) {
-      const week = Math.floor(index / 7), day = index % 7, x = 17 + week * 10.8 + day * 7, y = 95 + day * 6 - week * .55, h = level * 13;
-      cubes += `<g data-day="${date}" role="button" aria-label="${date}: ${exact(count)} tokens"><title>${date}: ${exact(count)} tokens</title><path d="M${x},${y-h}l10.3,-1l6.6,5.6l-10.3,1z" fill="${palette[level]}"/><path d="M${x+6.6},${y+4.6-h}l10.3,-1v${h}l-10.3,1z" fill="${palette[level]}" opacity=".55"/><path d="M${x},${y-h}l6.6,4.6v${h}l-6.6,-4.6z" fill="${palette[level]}" opacity=".75"/></g>`;
+      const week = Math.floor(index / 7), day = index % 7, x = 20 + week * 11 + day * 8, y = 145 + day * 7 - week * .6;
+      const h = count > 0 ? 5 + Math.pow(count / (peak || 1), .65) * 78 : 1;
+      cubes.push({ depth: y, markup: `<g data-day="${date}" role="button" aria-label="${date}: ${exact(count)} tokens"><title>${date}: ${compact(count)} tokens</title><path d="M${x+7.2},${y+5.5-h}l10.2,-1v${h}l-10.2,1z" fill="${palette[level]}" opacity=".6"/><path d="M${x},${y-h}l7.2,5.5v${h}l-7.2,-5.5z" fill="${palette[level]}" opacity=".82"/><path d="M${x},${y-h}l10.2,-1l7.2,5.5l-10.2,1z" fill="${palette[level]}" stroke="${date === state.day ? (state.theme === 'light' ? '#2866b1' : '#d7e5fa') : palette[0]}" stroke-width="${date === state.day ? 1 : .35}"/></g>` });
     }
     return `<button class="heat-cell${outside ? ' outside' : ''}${date === state.day ? ' selected' : ''}" style="background:${palette[level]}" data-day="${date}" tabindex="${date === state.day && !outside ? 0 : -1}" aria-pressed="${date === state.day}" aria-label="${date}: ${exact(count)} tokens" title="${date}: ${exact(count)} tokens"${outside ? ' disabled' : ''}></button>`;
   }).join('');
   const weeks = days.length / 7;
   $('heatmap').style.gridTemplateColumns = `repeat(${weeks},minmax(6px,1fr))`; $('heat-months').style.gridTemplateColumns = `repeat(${weeks},minmax(6px,1fr))`; $('heat-months').innerHTML = months;
-  $('heat-3d').innerHTML = cubes;
-  $('heatmap').parentElement.hidden = state.heatView === '3d'; $('heat-months').hidden = state.heatView === '3d'; $('heat-3d').hidden = state.heatView !== '3d';
+  $('heat-3d').setAttribute('viewBox', '0 0 680 230');
+  $('heat-3d').innerHTML = cubes.sort((a, b) => a.depth - b.depth).map((cube) => cube.markup).join('');
+  $('heatmap').parentElement.hidden = state.heatView === '3d'; $('heat-months').hidden = state.heatView === '3d'; $('heat-3d').toggleAttribute('hidden', state.heatView !== '3d');
   $('heat-active').textContent = days.filter((date) => date >= start && date <= end && rows.get(date)?.tokens > 0).length + ' ' + t('active days');
   $('heat-range').textContent = dateLabel(start) + ' – ' + dateLabel(end);
   $('palette-preview').innerHTML = palette.slice(1).map((value) => `<i style="background:${value}"></i>`).join(''); $('heat-scale').innerHTML = palette.map((value) => `<i style="background:${value}"></i>`).join('');
@@ -270,6 +294,8 @@ function renderDay() {
   const overall = cacheText(row.tokens, row.cacheReadTokens || 0, row.outputTokens || 0, row.unclassifiedTokens || 0);
   $('day-cache-hit').textContent = overall.label; $('day-cache-hit').title = overall.title;
   $('day-categories').innerHTML = categories(row, row.tokens).map(([label, value]) => `<div class="category"><span${label === 'Output' ? ` title="${esc(t('Includes reasoning where reported together'))}"` : ''}>${t(label)}</span><strong title="${exact(value)}">${compact(value)}</strong></div>`).join('');
+  $('day-users-section').hidden = state.user !== 'all';
+  $('day-users').innerHTML = state.user === 'all' ? users().map((user) => ({ ...user, tokens: row.perUser?.[user.id]?.tokens || 0 })).sort((a, b) => b.tokens - a.tokens).map((user) => `<div class="breakdown-row"><i class="color-dot" style="background:${userColor(user.id)}"></i><span class="row-name">${esc(user.name)}</span><span class="row-value" title="${exact(user.tokens)}">${compact(user.tokens)}</span></div>`).join('') : '';
   const section = (map, heading) => Object.keys(map).length ? `<div class="breakdown-label">${t(heading)}${heading === 'Models' ? `<span>${t('Cache hit')}</span>` : ''}</div>` + Object.entries(map).filter(([, value]) => value.tokens > 0).sort((a, b) => b[1].tokens - a[1].tokens).slice(0, 6).map(([label, value]) => {
     const rate = cacheText(value.tokens, value.cacheReadTokens || 0, value.outputTokens || 0, value.unclassifiedTokens ?? value.tokens);
     return `<div class="breakdown-row"><i class="color-dot" style="background:${color(label)}"></i><span class="row-name" title="${esc(label)}">${esc(LABELS[label] || label)}</span><span class="row-value">${compact(value.tokens)}</span>${heading === 'Models' ? `<span class="cache-rate" title="${esc(rate.title)}">${rate.label}</span>` : ''}</div>`;
@@ -283,7 +309,12 @@ function chartData() {
   const labels = new Map();
   const rows = dates.map((date) => {
     const row = history.get(date), values = Object.create(null);
-    if (state.provider === 'all') {
+    if (state.user === 'all') {
+      for (const user of users()) {
+        const entry = row?.perUser[user.id];
+        values[user.id] = (state.provider === 'all' ? entry?.[state.metric] : entry?.perClient?.[state.provider]?.[state.metric]) || 0;
+      }
+    } else if (state.provider === 'all') {
       for (const [label, entry] of Object.entries(row?.perModel || {})) values[label] = entry[state.metric] || 0;
       const remainder = (row?.[state.metric] || 0) - Object.values(values).reduce((sum, value) => sum + value, 0);
       if (remainder > 0) values.Unattributed = remainder;
@@ -304,37 +335,60 @@ function chartData() {
 }
 
 function renderChart() {
+  if ($('usage-view').hidden) return;
   const { rows, order, rawTotal } = chartData(); state.chartRows = rows;
   const valueAt = (row, label) => (state.average ? row.average : row.values)[label] || 0;
-  const width = Math.max(260, $('usage-chart').getBoundingClientRect().width), top = 15, bottom = 249;
+  const stackedView = state.user !== 'all';
+  const width = Math.max(220, $('usage-chart').getBoundingClientRect().width), left = 42, right = width - 8, top = 15, bottom = 249;
+  state.chartPlot = { left, width: right - left };
   $('usage-chart').setAttribute('viewBox', `0 0 ${width} 260`);
-  const maximum = Math.max(0, ...rows.map((row) => order.reduce((sum, label) => sum + valueAt(row, label), 0))) * 1.04 || 1;
+  const maximum = Math.max(0, ...rows.map((row) => stackedView ? order.reduce((sum, label) => sum + valueAt(row, label), 0) : Math.max(0, ...order.map((label) => valueAt(row, label))))) * 1.04 || 1;
   let svg = '<title>Usage over time</title>';
-  for (let i = 0; i < 5; i++) { const y = top + (bottom - top) * i / 4; svg += `<line x1="0" y1="${y}" x2="${width}" y2="${y}" class="chart-grid"/>`; }
-  const stacked = rows.map(() => 0), x = (index) => index / Math.max(1, rows.length - 1) * width, y = (value) => bottom - value / maximum * (bottom - top);
+  for (let i = 0; i < 5; i++) { const y = top + (bottom - top) * i / 4, value = maximum * (1 - i / 4); svg += `<line x1="${left}" y1="${y}" x2="${right}" y2="${y}" class="chart-grid"/><text x="${left - 7}" y="${y + 3}" text-anchor="end" class="chart-axis-label">${state.metric === 'tokens' ? compact(value) : money(value)}</text>`; }
+  const stacked = rows.map(() => 0), x = (index) => left + index / Math.max(1, rows.length - 1) * (right - left), y = (value) => bottom - value / maximum * (bottom - top);
+  let curves = '';
   for (const label of order) {
-    const lower = stacked.slice(); rows.forEach((row, index) => { stacked[index] += valueAt(row, label); });
+    const lower = stackedView ? stacked.slice() : rows.map(() => 0); rows.forEach((row, index) => { stacked[index] = (stackedView ? stacked[index] : 0) + valueAt(row, label); });
     const upper = stacked.map((value, index) => `${index ? 'L' : 'M'}${x(index).toFixed(1)},${y(value).toFixed(1)}`).join('');
     const lowerPath = lower.map((value, index) => [x(index), y(value)]).reverse().map(([px, py]) => `L${px.toFixed(1)},${py.toFixed(1)}`).join('');
-    svg += `<path d="${upper}${lowerPath}Z" fill="${color(label)}" fill-opacity=".38"/><path d="${upper}" fill="none" stroke="${color(label)}" stroke-width="1" stroke-opacity=".9"/>`;
+    svg += `<path d="${upper}${lowerPath}Z" fill="${chartColor(label)}" fill-opacity="${stackedView ? .38 : .16}"/>`;
+    const curve = `<path d="${upper}" fill="none" stroke="${chartColor(label)}" stroke-width="${stackedView ? 1 : 2}" stroke-opacity=".9"/>`;
+    if (stackedView) svg += curve; else curves += curve;
   }
+  svg += curves;
   svg += `<line id="chart-cursor" y1="${top}" y2="${bottom}" stroke="#c7d9f0" stroke-dasharray="3 3" style="display:none"/>`;
   $('usage-chart').innerHTML = svg; $('usage-chart').setAttribute('tabindex', '0'); $('chart-empty').hidden = rawTotal > 0;
   $('range-total-label').textContent = t(state.metric === 'tokens' ? 'Range total tokens' : 'Range total cost'); $('range-total').textContent = state.metric === 'tokens' ? compact(rawTotal) : money(rawTotal);
   $('chart-start').textContent = dateLabel(rows[0].date); $('chart-end').textContent = dateLabel(rows.at(-1).date);
-  $('chart-description').textContent = state.provider === 'all' ? t('Model activity for the selected range, grouped by provider.') : (LABELS[state.provider] || state.provider) + ' ' + t('activity for the selected range.');
+  $('chart-description').textContent = state.user === 'all' ? (state.provider === 'all' ? '' : (LABELS[state.provider] || state.provider) + ' · ') + t('User activity for the selected range.') : state.provider === 'all' ? t('Model activity for the selected range, grouped by provider.') : (LABELS[state.provider] || state.provider) + ' ' + t('activity for the selected range.');
   const shown = state.showAllLegend ? order : order.slice(0, 6);
-  $('chart-legend').innerHTML = shown.map((label) => `<span><i class="color-dot" style="background:${color(label)}"></i>${esc(LABELS[label] || label)}</span>`).join('') + (order.length > 6 ? `<button class="legend-more" id="legend-more">${state.showAllLegend ? t('Show less') : '+ ' + (order.length - 6) + ' ' + t('more')}</button>` : '');
+  $('chart-legend').innerHTML = shown.map((label) => `<span><i class="color-dot" style="background:${chartColor(label)}"></i>${esc(chartLabel(label))}</span>`).join('') + (order.length > 6 ? `<button class="legend-more" id="legend-more">${state.showAllLegend ? t('Show less') : '+ ' + (order.length - 6) + ' ' + t('more')}</button>` : '');
   $('chart-provider').innerHTML = '<option value="all">' + t('All') + '</option>' + Object.keys(periodSummary('lifetime').clients).map((label) => `<option value="${esc(label)}">${esc(LABELS[label] || label)}</option>`).join(''); $('chart-provider').value = state.provider;
   $('chart-tooltip').hidden = true;
 }
 
 function inspectChart(index) {
   const row = state.chartRows[index]; if (!row) return;
-  const width = $('usage-chart').getBoundingClientRect().width, position = index / Math.max(1, state.chartRows.length - 1) * width;
-  $('chart-tooltip').innerHTML = `<strong>${dateLabel(row.date)}</strong><span>${state.metric === 'tokens' ? exact(row.total) + ' tokens' : money(row.total)}</span>`;
-  $('chart-tooltip').style.left = Math.min(Math.max(12, position + 6), Math.max(12, width - 140)) + 'px'; $('chart-tooltip').hidden = false;
+  const width = $('usage-chart').getBoundingClientRect().width, position = state.chartPlot.left + index / Math.max(1, state.chartRows.length - 1) * state.chartPlot.width;
+  const format = (value) => state.metric === 'tokens' ? compact(value) + ' Tokens' : money(value);
+  const tooltip = $('chart-tooltip');
+  const entries = Object.entries(row.values).filter(([, value]) => state.user === 'all' || value > 0).sort((a, b) => b[1] - a[1]);
+  tooltip.innerHTML = `<strong>${dateLabel(row.date)}</strong><div class="chart-tooltip-total"><span>${t('Total')}</span><b>${format(row.total)}</b></div><dl>${entries.map(([label, value]) => `<div><dt><i class="color-dot" style="background:${chartColor(label)}"></i><span>${esc(chartLabel(label))}</span></dt><dd>${format(value)}</dd></div>`).join('')}</dl>`;
+  tooltip.hidden = false;
+  tooltip.style.left = Math.min(Math.max(12, position + 22), Math.max(12, width + 20 - tooltip.getBoundingClientRect().width)) + 'px';
   const cursor = $('chart-cursor'); cursor.style.display = ''; cursor.setAttribute('x1', position); cursor.setAttribute('x2', position); $('usage-chart').dataset.index = index;
+}
+
+function chartIndex(event) {
+  const chart = $('usage-chart'), point = chart.createSVGPoint();
+  point.x = event.clientX; point.y = event.clientY;
+  const local = point.matrixTransform(chart.getScreenCTM().inverse());
+  return Math.max(0, Math.min(state.chartRows.length - 1, Math.round((local.x - state.chartPlot.left) / state.chartPlot.width * (state.chartRows.length - 1))));
+}
+
+function hideChartTooltip() {
+  $('chart-tooltip').hidden = true;
+  if ($('chart-cursor')) $('chart-cursor').style.display = 'none';
 }
 
 function renderDetails() {
@@ -350,7 +404,21 @@ function renderDetails() {
 }
 
 function renderModels() {
-  const value = periodSummary(), models = Object.entries(value.models).sort((a, b) => (value.modelCosts[b[0]] || 0) - (value.modelCosts[a[0]] || 0) || b[1] - a[1]);
+  const value = periodSummary();
+  const metric = ([name, tokens]) => state.modelSort === 'model' ? name : state.modelSort === 'tokens' ? tokens
+    : state.modelSort === 'cache' ? cacheHit(tokens, value.modelCacheReads[name] || 0, value.modelOutputs[name] || 0, value.modelUnclassifiedTokens[name] || 0, value.componentsAvailable || Object.hasOwn(value.modelUnclassifiedTokens, name))
+    : state.modelSort === 'share' ? value.costUsd > 0 ? (value.modelCosts[name] || 0) / value.costUsd : null : value.modelCosts[name] ?? null;
+  const models = Object.entries(value.models).sort((a, b) => {
+    const first = metric(a), second = metric(b);
+    if (first === null || second === null) return first === second ? a[0].localeCompare(b[0]) : first === null ? 1 : -1;
+    const difference = typeof first === 'string' ? first.localeCompare(second, undefined, { numeric: true }) : first - second;
+    return (state.modelOrder === 'asc' ? difference : -difference) || a[0].localeCompare(b[0]);
+  });
+  document.querySelectorAll('.models-table th[data-sort]').forEach((header) => {
+    const active = header.dataset.sort === state.modelSort;
+    header.setAttribute('aria-sort', active ? state.modelOrder === 'asc' ? 'ascending' : 'descending' : 'none');
+    header.querySelector('.sort-indicator').textContent = active ? state.modelOrder === 'asc' ? '↑' : '↓' : '↕';
+  });
   $('models-list').innerHTML = models.map(([name, tokens]) => {
     const rate = cacheText(tokens, value.modelCacheReads[name] || 0, value.modelOutputs[name] || 0, value.modelUnclassifiedTokens[name] || 0, value.componentsAvailable || Object.hasOwn(value.modelUnclassifiedTokens, name));
     return `<tr><td><i class="color-dot" style="background:${color(name)}"></i><span title="${esc(name)}">${esc(name)}</span></td><td title="${exact(tokens)}">${compact(tokens)}</td><td>${Object.hasOwn(value.modelCosts, name) ? money(value.modelCosts[name]) : '—'}</td><td class="cache-hit-cell" title="${esc(rate.title)}">${rate.label}</td><td>${value.costUsd ? ((value.modelCosts[name] || 0) / value.costUsd * 100).toFixed(1) + '%' : '—'}</td></tr>`;
@@ -372,6 +440,7 @@ function renderControls() {
 function render() {
   if (!state.data) return;
   if (state.user !== 'all' && !state.data.users.some((user) => user.id === state.user)) state.user = 'all';
+  if (state.device !== 'all' && !availableDevices().some((device) => device.id === state.device)) state.device = 'all';
   if (!state.day) state.day = today();
   translatePage(); renderProfile(); renderControls(); renderHeat(); renderDay(); renderChart(); renderDetails(); renderModels(); renderDevices();
 }
@@ -387,8 +456,9 @@ async function refresh() {
 }
 
 document.addEventListener('click', (event) => {
-  const target = event.target.closest('[data-user],[data-tab],[data-period],[data-view],[data-metric],[data-day],#legend-more'); if (!target || target.disabled || !state.data) return;
-  if (target.dataset.user) { state.user = target.dataset.user; state.provider = 'all'; const url = new URL(location.href); if (state.user === 'all') url.searchParams.delete('user'); else url.searchParams.set('user', state.user); history.replaceState(null, '', url); }
+  const target = event.target.closest('[data-user],[data-tab],[data-period],[data-view],[data-metric],[data-day],[data-sort],#legend-more'); if (!target || target.disabled || !state.data) return;
+  if (target.dataset.user) { state.user = target.dataset.user; state.device = 'all'; state.provider = 'all'; const url = new URL(location.href); url.searchParams.delete('device'); if (state.user === 'all') url.searchParams.delete('user'); else url.searchParams.set('user', state.user); history.replaceState(null, '', url); }
+  if (target.dataset.sort) { state.modelOrder = state.modelSort === target.dataset.sort && state.modelOrder === 'desc' ? 'asc' : 'desc'; state.modelSort = target.dataset.sort; renderModels(); return; }
   if (target.dataset.tab) state.tab = target.dataset.tab;
   if (target.dataset.period) { state.period = target.dataset.period; state.day = bounds()[1]; }
   if (target.dataset.view) state.heatView = target.dataset.view;
@@ -398,14 +468,17 @@ document.addEventListener('click', (event) => {
   render();
 });
 $('heat-year').addEventListener('change', (event) => { state.year = event.target.value; renderHeat(); });
+$('device-select').addEventListener('change', (event) => { state.device = event.target.value; state.provider = 'all'; const url = new URL(location.href); if (state.device === 'all') url.searchParams.delete('device'); else url.searchParams.set('device', state.device); history.replaceState(null, '', url); render(); });
 $('heat-color').addEventListener('change', (event) => { state.color = event.target.value; renderHeat(); });
 $('chart-display').addEventListener('change', (event) => { state.average = event.target.value === 'average'; renderChart(); });
 $('chart-provider').addEventListener('change', (event) => { state.provider = event.target.value; renderChart(); });
 $('newest-first').addEventListener('change', (event) => { state.newest = event.target.checked; renderChart(); });
-$('usage-chart').addEventListener('pointermove', (event) => { const box = event.currentTarget.getBoundingClientRect(); inspectChart(Math.max(0, Math.min(state.chartRows.length - 1, Math.round((event.clientX - box.left) / box.width * (state.chartRows.length - 1))))); });
-$('usage-chart').addEventListener('pointerleave', () => { $('chart-tooltip').hidden = true; if ($('chart-cursor')) $('chart-cursor').style.display = 'none'; });
-$('usage-chart').addEventListener('click', () => { const row = state.chartRows[Number($('usage-chart').dataset.index)]; if (row) { state.day = row.date; renderHeat(); renderDay(); } });
-$('usage-chart').addEventListener('keydown', (event) => { let index = Number(event.currentTarget.dataset.index || 0); if (event.key === 'ArrowRight') index++; else if (event.key === 'ArrowLeft') index--; else if (event.key === 'Home') index = 0; else if (event.key === 'End') index = state.chartRows.length - 1; else if (event.key === 'Escape') { $('chart-tooltip').hidden = true; return; } else return; event.preventDefault(); inspectChart(Math.max(0, Math.min(state.chartRows.length - 1, index))); });
+$('usage-chart').addEventListener('pointermove', (event) => { if (event.pointerType !== 'touch') inspectChart(chartIndex(event)); });
+$('usage-chart').addEventListener('pointerleave', (event) => { if (event.pointerType !== 'touch') hideChartTooltip(); });
+$('usage-chart').addEventListener('pointercancel', hideChartTooltip);
+$('usage-chart').addEventListener('click', (event) => { const index = chartIndex(event), row = state.chartRows[index]; if (row) { inspectChart(index); state.day = row.date; renderHeat(); renderDay(); } });
+$('usage-chart').addEventListener('keydown', (event) => { let index = Number(event.currentTarget.dataset.index || 0); if (event.key === 'ArrowRight') index++; else if (event.key === 'ArrowLeft') index--; else if (event.key === 'Home') index = 0; else if (event.key === 'End') index = state.chartRows.length - 1; else if (event.key === 'Escape') { hideChartTooltip(); return; } else return; event.preventDefault(); inspectChart(Math.max(0, Math.min(state.chartRows.length - 1, index))); });
+document.addEventListener('pointerdown', (event) => { if (!event.target.closest('#usage-chart,#chart-tooltip')) hideChartTooltip(); });
 $('heatmap').addEventListener('keydown', (event) => { const delta = { ArrowLeft: -7, ArrowRight: 7, ArrowUp: -1, ArrowDown: 1 }[event.key]; if (delta === undefined && !['Home', 'End'].includes(event.key)) return; event.preventDefault(); const { start, end } = heatDays(); state.day = event.key === 'Home' ? start : event.key === 'End' ? end : shift(state.day, delta); if (state.day < start) state.day = start; if (state.day > end) state.day = end; renderHeat(); renderDay(); document.querySelector(`[data-day="${state.day}"]`)?.focus(); });
 $('refresh').addEventListener('click', refresh);
 $('share').addEventListener('click', async () => { try { await navigator.clipboard.writeText(location.href); $('share').innerHTML = t('Copied'); setTimeout(() => { $('share').innerHTML = '↗ <span data-i18n="Share">' + t('Share') + '</span>'; }, 1500); } catch { $('notice').textContent = t('Page URL') + ': ' + location.href; $('notice').hidden = false; } });

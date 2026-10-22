@@ -17,7 +17,7 @@ const { HistoryArchive } = require('./archive');
 const ROOT = path.resolve(__dirname, '..');
 const deploymentFile = path.join(ROOT, 'config/deployment.json');
 const deployment = fs.existsSync(deploymentFile) ? JSON.parse(fs.readFileSync(deploymentFile, 'utf8')) : {};
-const PUBLIC_URL = process.env.PUBLIC_URL || deployment.publicUrl || 'https://example.com';
+const PUBLIC_URL = deployment.publicUrl || 'https://usage.example.com';
 const TIME_ZONE = deployment.timeZone || 'Asia/Shanghai';
 const STATIC_FILES = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -94,7 +94,9 @@ async function createApp(options = {}) {
 
   function publicSnapshot() {
     if (publicCache && Date.now() - publicCache.cachedAt < 5000) return publicCache.value;
-    const people = users.map((user) => publicUser(user, hubs.get(user.id), (deviceId) => deviceNames[nameKey(user.id, deviceId)]));
+    const people = users.map((user) => publicUser(user, hubs.get(user.id), (deviceId) => deviceNames[nameKey(user.id, deviceId)], (deviceId) => ({
+      daily: archive.read(user.id, 'daily', deviceId), monthly: archive.read(user.id, 'monthly', deviceId)
+    })));
     const value = {
       generatedAt: new Date().toISOString(), timeZone: TIME_ZONE, users: people,
       periods: Object.fromEntries(['today', 'month', 'allTime'].map((period) => [period, combinePeriods(people.map((person) => person.periods[period]))])),

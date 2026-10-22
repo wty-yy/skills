@@ -39,8 +39,10 @@ class HistoryArchive {
     }
   }
 
-  read(userId, kind = 'daily') {
-    const rows = this.db.prepare('SELECT payload FROM history WHERE user_id=? AND kind=? ORDER BY bucket').all(userId, kind);
+  read(userId, kind = 'daily', deviceId) {
+    const filter = deviceId === undefined ? '' : ' AND device_id=?';
+    const args = deviceId === undefined ? [userId, kind] : [userId, kind, deviceId];
+    const rows = this.db.prepare('SELECT payload FROM history WHERE user_id=? AND kind=?' + filter + ' ORDER BY bucket').all(...args);
     const result = new Map();
     const key = kind === 'daily' ? 'date' : 'month';
     for (const { payload } of rows) {

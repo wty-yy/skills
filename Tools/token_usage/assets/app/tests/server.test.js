@@ -146,3 +146,17 @@ test('HTML versions its scripts and stylesheet so cached resources cannot mix la
     assert.equal((await request(match[0])).status, 200);
   }
 });
+
+test('public device histories stay separate across devices and users', async (t) => {
+  const { request } = await fixture(t);
+  await request('/api/ingest', users[0], { ...payload('laptop', 100), displayName: 'Laptop' });
+  await request('/api/ingest', users[0], { ...payload('desktop', 200), displayName: 'Desktop' });
+  await request('/api/ingest', users[1], { ...payload('laptop', 900), displayName: 'Other user' });
+  const data = await (await request('/api/public/stats')).json();
+  const a = data.users[0], b = data.users[1];
+  assert.equal(a.devices.find((d) => d.name === 'Laptop').history.daily[0].tokens, 100);
+  assert.equal(a.devices.find((d) => d.name === 'Desktop').history.daily[0].tokens, 200);
+  assert.equal(b.devices[0].history.daily[0].tokens, 900);
+  assert.notEqual(a.devices.find((d) => d.name === 'Laptop').id, b.devices[0].id);
+  assert.equal(data.history['user-a'].daily[0].tokens, 300);
+});
