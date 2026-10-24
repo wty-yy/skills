@@ -1,0 +1,4 @@
+interface:
+  display_name: "天翼云盘下载"
+  short_description: "天翼云盘 API 分段下载、断点恢复、自动重试与逐文件完整性校验"
+  default_prompt: "Use $cloud189-download to download my requested Tianyi Cloud folders and verify every file."

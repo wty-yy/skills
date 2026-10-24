@@ -87,6 +87,7 @@ Categories follow `<category>/<skill>/SKILL.md`; the installers discover them au
 
 - `build-vps`: set up VPS access, proxy nodes, and Clash Verge subscriptions with bandwidth usage and automatic rules.
 - `check-opencode-usage`: check OpenCode usage and costs.
+- `cloud189-download`: download Tianyi Cloud folders with resumable ranges and MD5 verification.
 - `commandcode-tools`: check Command Code usage and configure its provider.
 - `get-wandb-data-from-chrome-cookie`: download W&B run data.
 - `wechat_get_data`: read local Linux WeChat records and recover emoji.
