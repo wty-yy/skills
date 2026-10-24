@@ -7,7 +7,7 @@
 先确定用户归属并询问设备展示名称，从管理员取得该用户的 `<user-id>-agent.env`，不要把整个 `users.json` 交给其他用户。Hub URL 和密钥复用已有服务端配置；新建 Hub 时另外询问 Hub/token 名称，不与设备名称混为一项。
 
 ```bash
-SKILL=/path/to/token_usage
+SKILL=/path/to/token-usage
 CLIENT="$HOME/token-monitor-agent"
 
 python3 "$SKILL/scripts/manage.py" client \

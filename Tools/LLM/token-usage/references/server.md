@@ -11,7 +11,7 @@
 先检查目标目录、`ss -lntp`、现有反向代理和 Node.js。以下命令在目标 Linux 主机执行，`SKILL` 为已复制到该主机的 skill 路径。
 
 ```bash
-SKILL=/path/to/token_usage
+SKILL=/path/to/token-usage
 ROOT=/root/token_usage
 
 python3 "$SKILL/scripts/manage.py" server \

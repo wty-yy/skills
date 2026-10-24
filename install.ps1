@@ -5,7 +5,7 @@ param(
     [string]$Action = 'help',
 
     [Parameter(Position = 1, ValueFromRemainingArguments = $true)]
-    [string[]]$Agents = @('all'),
+    [string[]]$Agents = @(),
 
     [switch]$Yes,
     [switch]$GlobalInstructions,
@@ -17,30 +17,34 @@ $ErrorActionPreference = 'Stop'
 
 function Show-Usage {
     @'
-Usage: .\install.cmd <install|uninstall> [claude|codex|opencode|all ...] [-Yes] [-GlobalInstructions]
-       .\install.ps1 <install|uninstall> [claude|codex|opencode|all ...] [-Yes] [-GlobalInstructions]
+Usage: .\install.cmd <install|uninstall> [claude|codex|opencode|dsh|all ...] [-Yes] [-GlobalInstructions]
+       .\install.ps1 <install|uninstall> [claude|codex|opencode|dsh|all ...] [-Yes] [-GlobalInstructions]
 
 Discover skill directories recursively and group by relative parent directory.
-No agent argument selects all three agents. Install opens a numbered checklist;
-enter a skill or category number to toggle it, a for all, n for none, Enter to
-apply, or q to cancel. Installed repository skills are selected by default.
-Use -Yes to skip selection and install every skill.
+Choose AI tools first, then skills for each selected tool. Named agents are
+preselected; install codex still opens the tool checklist. Enter a tool, skill
+or category number to toggle it, a for all, n for none, Enter to apply, or q to
+cancel. Install preselects installed repository skills; uninstall starts with
+no skills selected and removes only checked repository links. -Yes skips both
+checklists and processes all skills for named tools, or all tools if omitted.
 Select global instructions to replace the existing file with a symlink to this
 repository's AGENTS.md. -GlobalInstructions preselects this option; combine with
--Yes to install it directly. -Yes alone leaves global instructions unchanged.
+-Yes to install it directly. On install, -Yes alone leaves global instructions unchanged.
 Deselecting or uninstalling removes only this repository's instruction links.
 
 Default destinations (relative to your user profile):
   claude    .claude\skills
   codex     .codex\skills
   opencode  .config\opencode\skills
+  dsh       .dsh\skills
 
 Default global instruction files:
   claude    .claude\CLAUDE.md
   codex     .codex\AGENTS.md
   opencode  .config\opencode\AGENTS.md
+  dsh       .dsh\AGENTS.md
 
-Overrides: SKILLS_INSTALL_HOME, CLAUDE_CONFIG_DIR, CODEX_HOME, XDG_CONFIG_HOME.
+Overrides: SKILLS_INSTALL_HOME, CLAUDE_CONFIG_DIR, CODEX_HOME, XDG_CONFIG_HOME, DSH_HOME.
 Windows creates directory junctions; other platforms use symbolic links.
 Global instructions use file symlinks, which require Developer Mode or an
 elevated terminal on Windows.
@@ -85,6 +89,10 @@ function Get-SkillsDirectory([string]$Agent) {
             $config = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $installHome '.codex' }
             Get-NormalPath (Join-Path $config 'skills')
         }
+        'dsh' {
+            $config = if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $installHome '.dsh' }
+            Get-NormalPath (Join-Path $config 'skills')
+        }
         'opencode' {
             $config = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $installHome '.config' }
             Get-NormalPath (Join-Path $config 'opencode/skills')
@@ -114,6 +122,24 @@ function Get-InstructionsFile([string]$Agent) {
     $config = Split-Path -Parent (Get-SkillsDirectory $Agent)
     $name = if ($Agent -eq 'claude') { 'CLAUDE.md' } else { 'AGENTS.md' }
     Get-NormalPath (Join-Path $config $name)
+}
+
+function Get-LegacySkillName([string]$Name) {
+    switch ($Name) {
+        'opencode-tools' { 'check-opencode-usage' }
+        'token-usage' { 'token_usage' }
+        'wechat-get-data' { 'wechat_get_data' }
+    }
+}
+
+function Remove-LegacySkillLink([string]$Agent, [string]$TargetDirectory, [string]$Name) {
+    $legacy = Get-LegacySkillName $Name
+    if (-not $legacy) { return $false }
+    $existing = Get-Item -LiteralPath (Join-Path $TargetDirectory $legacy) -Force -ErrorAction SilentlyContinue
+    if (-not (Get-RepoLinkTarget $existing)) { return $false }
+    Remove-Destination $existing
+    Write-Host "[$Agent] Removed renamed skill: $legacy -> $Name"
+    return $true
 }
 
 function Test-InstructionsLink($Item) {
@@ -194,22 +220,56 @@ function Get-Selection([string]$TargetDirectory, [string]$Instructions) {
         } elseif ($null -ne $existing) {
             New-SelectionItem $skill.FullName $false ''
         } else {
-            New-SelectionItem $skill.FullName $false 'Not installed'
+            $legacy = Get-LegacySkillName $skill.Name
+            $legacyItem = if ($legacy) {
+                Get-Item -LiteralPath (Join-Path $TargetDirectory $legacy) -Force -ErrorAction SilentlyContinue
+            } else { $null }
+            if (Get-RepoLinkTarget $legacyItem) {
+                New-SelectionItem $skill.FullName $true 'Installed; renamed skill'
+            } else {
+                New-SelectionItem $skill.FullName $false 'Not installed'
+            }
         }
     }
     if (Test-Path -LiteralPath $TargetDirectory -PathType Container) {
         foreach ($existing in Get-ChildItem -LiteralPath $TargetDirectory -Force) {
             $source = Get-RepoLinkTarget $existing
             if ($source -and -not $skillNames.ContainsKey($existing.Name)) {
-                New-SelectionItem $source $true 'Installed; source skill removed'
+                $replacement = @($skills | Where-Object { (Get-LegacySkillName $_.Name) -eq $existing.Name })
+                if ($replacement.Count -eq 0) {
+                    New-SelectionItem $source $true 'Installed; source skill removed'
+                }
             }
         }
     }
 }
 
-function Select-Skills([object[]]$Items, [string]$Agent, [string]$TargetDirectory) {
+function Get-RemovalSelection([string]$TargetDirectory, [string]$Instructions) {
+    $existing = Get-Item -LiteralPath $Instructions -Force -ErrorAction SilentlyContinue
+    if (Test-InstructionsLink $existing) {
+        $item = New-SelectionItem (Join-Path $repoRoot 'AGENTS.md') $false 'Installed'
+        $item.Category = ''
+        $item.Name = "AGENTS.md -> $Instructions (remove link)"
+        $item
+    }
+    if (Test-Path -LiteralPath $TargetDirectory -PathType Container) {
+        foreach ($existing in Get-ChildItem -LiteralPath $TargetDirectory -Force) {
+            $source = Get-RepoLinkTarget $existing
+            if ($source) { New-SelectionItem $source $false 'Installed' }
+        }
+    }
+}
+
+function Select-Skills([object[]]$Items, [string]$Agent, [string]$TargetDirectory, [switch]$Tools) {
     while ($true) {
-        Write-Host "`nSkill selection - $Agent`nDirectory: $TargetDirectory"
+        if ($Tools) {
+            Write-Host "`nAI tool selection"
+        } elseif ($Action -eq 'uninstall') {
+            Write-Host "`nSkills to uninstall - $Agent`nDirectory: $TargetDirectory"
+            Write-Host 'Only checked repository links will be removed.'
+        } else {
+            Write-Host "`nSkill selection - $Agent`nDirectory: $TargetDirectory"
+        }
         $rows = @{}
         $number = 0
         foreach ($item in $Items | Where-Object { -not $_.Category }) {
@@ -235,7 +295,13 @@ function Select-Skills([object[]]$Items, [string]$Agent, [string]$TargetDirector
             }
         }
         $choice = (Read-Host 'Number: toggle | a: all | n: none | Enter: apply | q: cancel').Trim()
-        if ($choice -eq '') { return $true }
+        if ($choice -eq '') {
+            if ($Tools -and @($Items | Where-Object Selected).Count -eq 0) {
+                Write-Host 'Select at least one AI tool.'
+                continue
+            }
+            return $true
+        }
         if ($choice -eq 'q') { return $false }
         if ($choice -in @('a', 'n')) {
             $changed = $Items
@@ -284,14 +350,28 @@ try {
     $selectedAgents = @()
     foreach ($agent in $Agents) {
         switch ($agent) {
-            'all' { $selectedAgents += 'claude', 'codex', 'opencode' }
-            { $_ -in @('claude', 'codex', 'opencode') } { $selectedAgents += $agent }
-            default { throw "Unknown agent: $agent (supported: claude, codex, opencode, all)" }
+            'all' { $selectedAgents += 'claude', 'codex', 'opencode', 'dsh' }
+            { $_ -in @('claude', 'codex', 'opencode', 'dsh') } { $selectedAgents += $agent }
+            default { throw "Unknown agent: $agent (supported: claude, codex, opencode, dsh, all)" }
         }
     }
     $selectedAgents = @($selectedAgents | Select-Object -Unique)
-    if ($Action -eq 'install' -and -not $Yes -and [Console]::IsInputRedirected) {
-        throw 'Interactive install requires a terminal. Use -Yes to install every skill.'
+    if (-not $Yes -and [Console]::IsInputRedirected) {
+        throw 'Interactive selection requires a terminal. Use -Yes to skip both checklists.'
+    }
+    if ($Yes -and $selectedAgents.Count -eq 0) {
+        $selectedAgents = @('claude', 'codex', 'opencode', 'dsh')
+    } elseif (-not $Yes) {
+        $toolItems = @('claude', 'codex', 'opencode', 'dsh' | ForEach-Object {
+            $item = New-SelectionItem (Join-Path $repoRoot $_) ($_ -in $selectedAgents) ''
+            $item.Category = ''
+            $item
+        })
+        if (-not (Select-Skills $toolItems '' '' -Tools)) {
+            Write-Host 'Cancelled; no changes applied.'
+            return
+        }
+        $selectedAgents = @($toolItems | Where-Object Selected | ForEach-Object Name)
     }
     $skillNames = @{}
     $skills = @()
@@ -308,14 +388,27 @@ try {
         $installed = 0
         $removed = 0
         if ($Action -eq 'uninstall') {
-            Set-InstructionsLink $agent $instructions $false
-            if (Test-Path -LiteralPath $targetDirectory -PathType Container) {
-                foreach ($existing in Get-ChildItem -LiteralPath $targetDirectory -Force) {
-                    if (Get-RepoLinkTarget $existing) {
-                        Remove-Destination $existing
-                        $removed++
-                        Write-Host "[$agent] Removed: $($existing.FullName)"
-                    }
+            $items = @(Get-RemovalSelection $targetDirectory $instructions)
+            if ($items.Count -eq 0) {
+                Write-Host "[$agent] Nothing to uninstall: $targetDirectory"
+                continue
+            }
+            if ($Yes) {
+                foreach ($item in $items) { $item.Selected = $true }
+            } elseif (-not (Select-Skills $items $agent $targetDirectory)) {
+                Write-Host "[$agent] Cancelled; no changes applied to this agent."
+                return
+            }
+            foreach ($item in $items | Where-Object Selected) {
+                if (Test-SamePath $item.Source (Join-Path $repoRoot 'AGENTS.md')) {
+                    Set-InstructionsLink $agent $instructions $false
+                    continue
+                }
+                $existing = Get-Item -LiteralPath (Join-Path $targetDirectory $item.Name) -Force -ErrorAction SilentlyContinue
+                if (Get-RepoLinkTarget $existing) {
+                    Remove-Destination $existing
+                    $removed++
+                    Write-Host "[$agent] Removed: $($existing.FullName)"
                 }
             }
             Write-Host "[$agent] Uninstalled $removed skill(s) from $targetDirectory"
@@ -354,6 +447,7 @@ try {
             if (-not (Test-Path -LiteralPath (Join-Path $item.Source 'SKILL.md') -PathType Leaf)) { continue }
             if ((Test-SamePath $destination $item.Source) -or ($linkedSource -and (Test-SamePath $linkedSource $item.Source))) {
                 Write-Host "[$agent] Already present: $($item.Name)"
+                if (Remove-LegacySkillLink $agent $targetDirectory $item.Name) { $removed++ }
                 continue
             }
             $destinationPrefix = $destination.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
@@ -368,6 +462,7 @@ try {
             New-Item -Path $targetDirectory -Name $item.Name -ItemType $linkType -Value $item.Source | Out-Null
             $installed++
             Write-Host "[$agent] Linked: $destination -> $($item.Source)"
+            if (Remove-LegacySkillLink $agent $targetDirectory $item.Name) { $removed++ }
         }
         Write-Host "[$agent] Installed $installed skill(s), removed $removed skill(s) in $targetDirectory"
     }

@@ -5,7 +5,7 @@ Use generated encrypted pages and an owned child process instead of real keys,
 chat records, or user images. No sudo is needed.
 
 Quick Start:
-    python -m unittest discover -s wechat_get_data/tests -v
+    python -m unittest discover -s Tools/Downloader/wechat-get-data/tests -v
 
 Notes:
     Tests require Linux /proc access, pycryptodome, and zstandard.

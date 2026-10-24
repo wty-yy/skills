@@ -1,0 +1,4 @@
+interface:
+  display_name: "Token Usage"
+  short_description: "部署多用户 Token 用量网页、独立 Hub、历史存储与无界面采集客户端"
+  default_prompt: "使用 $token-usage 部署或维护我的 Token 用量系统，并配置对应用户的无界面采集器。"

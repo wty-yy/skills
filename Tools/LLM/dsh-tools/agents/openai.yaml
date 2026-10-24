@@ -1,0 +1,4 @@
+interface:
+  display_name: "DSH Tools"
+  short_description: "Check DSH prerequisites and connect Command Code APIs."
+  default_prompt: "Use $dsh-tools to check npm, pnpm, dsh, and dsh-tui, then configure my Command Code API for both interfaces."

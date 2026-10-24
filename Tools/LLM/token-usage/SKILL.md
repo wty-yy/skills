@@ -1,5 +1,5 @@
 ---
-name: token_usage
+name: token-usage
 description: 部署和维护多用户、多设备的 AI Token 用量系统，包括 Token Monitor Hub、公开网页、历史存储、HTTPS 和 npm 无界面采集器。适用于复现整套部署、接入设备或排查上传与统计；不用于供应商账单查询。
 ---
 

@@ -1,5 +1,5 @@
 ---
-name: wechat_get_data
+name: wechat-get-data
 description: Read local WeChat Linux 4.x chat data and recover original emoji images from an authorized running WeChat session. Use for locating messages, querying a specified conversation, or exporting a chat sticker from local xwechat_files databases and process memory.
 ---
 
@@ -22,7 +22,7 @@ description: Read local WeChat Linux 4.x chat data and recover original emoji im
 # 使用同一个已安装依赖的 Python 解释器运行普通和 sudo 命令
 python -m pip install pycryptodome zstandard
 TASK_PYTHON=$(command -v python)
-SCRIPT=/path/to/wechat_get_data/scripts/wechat_data.py
+SCRIPT=/path/to/wechat-get-data/scripts/wechat_data.py
 ACCOUNT="$HOME/Documents/xwechat_files/<account>"
 PID=$(pgrep -x wechat)
 WORK=$(mktemp -d)

@@ -1,9 +1,9 @@
 ---
-name: check-opencode-usage
+name: opencode-tools
 description: Query opencode.ai console usage/cost and OpenCode Go membership quota with a service API key plus the local Chrome login, generate or publish the HTML dashboard, switch billing periods and refresh the hosted report. Use when the user asks for opencode usage, daily token/cost totals, per-API-key or per-model breakdowns, cache hit rate, remaining Go quota, or to refresh/publish the report at opencode-usage.wty-yy.top.
 ---
 
-# Check opencode usage
+# OpenCode Tools
 
 ## When To Use
 
