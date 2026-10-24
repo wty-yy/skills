@@ -4,6 +4,34 @@
 
 [English](README.md) | 简体中文
 
+## Skills
+
+类别采用 `<category>/<skill>/SKILL.md` 结构，安装器自动发现。
+
+### Coding
+
+- [code-simplifier](Coding/code-simplifier/)：保持行为不变，简化代码。
+- [no-ai-slop](Coding/no-ai-slop/)：润色写作，减少 AI 化表达。
+- [python-docstring-standard](Coding/python-docstring-standard/)：规范 Python 文档字符串。
+- [writing-a-project-proposal](Coding/writing-a-project-proposal/)：撰写中文项目申报材料。
+- [wty-markdown-standards](Coding/wty-markdown-standards/)：规范 Markdown 文档和更新日志。
+
+### Tools
+
+- [build-vps](Tools/build-vps/)：配置 VPS 访问、代理节点及 Clash Verge 订阅，支持流量用量和自动更新规则。
+- [cloud189-download](Tools/Downloader/cloud189-download/)：下载天翼云盘文件夹，支持断点续传和 MD5 校验。
+- [get-wandb-data-from-chrome-cookie](Tools/Downloader/get-wandb-data-from-chrome-cookie/)：下载 W&B 运行数据。
+- [wechat-get-data](Tools/Downloader/wechat-get-data/)：读取 Linux 本地微信记录并恢复表情。
+- [youtube-download](Tools/Downloader/youtube-download/)：下载视频、音频和双语字幕。
+- [yuketang-background](Tools/yuketang-background/)：管理雨课堂课程任务。
+
+#### LLM
+
+- [commandcode-tools](Tools/LLM/commandcode-tools/)：查询 Command Code 用量并配置服务提供商。
+- [dsh-tools](Tools/LLM/dsh-tools/)：检查 DSH 依赖，为 Web 和 TUI 配置 API 接入。
+- [opencode-tools](Tools/LLM/opencode-tools/)：查询 OpenCode 用量和费用。
+- [token-usage](Tools/LLM/token-usage/)：部署和维护 Token 用量网页及采集器。
+
 ## 使用
 
 克隆并保留仓库目录，安装后的 skills 会链接到该目录。
@@ -85,33 +113,3 @@ Windows 中的 `~` 表示 `%USERPROFILE%`。设置 `SKILLS_INSTALL_HOME` 可修�
 安装会覆盖同名项。取消选择或卸载只移除本仓库的链接。更新时运行 `git pull`，新增或移动 skill 后重新运行安装器。
 
 安装 `opencode-tools`、`token-usage` 或 `wechat-get-data` 时，会清理本仓库对应的旧名称 `check-opencode-usage`、`token_usage` 或 `wechat_get_data` 链接。已有旧名称安装会默认勾选对应新名称；其他文件、目录和链接保持不变。
-
-## Skills
-
-类别采用 `<category>/<skill>/SKILL.md` 结构，安装器自动发现。
-
-### Coding
-
-- [code-simplifier](Coding/code-simplifier/)：保持行为不变，简化代码。
-- [no-ai-slop](Coding/no-ai-slop/)：润色写作，减少 AI 化表达。
-- [python-docstring-standard](Coding/python-docstring-standard/)：规范 Python 文档字符串。
-- [writing-a-project-proposal](Coding/writing-a-project-proposal/)：撰写中文项目申报材料。
-- [wty-markdown-standards](Coding/wty-markdown-standards/)：规范 Markdown 文档和更新日志。
-
-### Tools
-
-- [build-vps](Tools/build-vps/)：配置 VPS 访问、代理节点及 Clash Verge 订阅，支持流量用量和自动更新规则。
-- [cloud189-download](Tools/Downloader/cloud189-download/)：下载天翼云盘文件夹，支持断点续传和 MD5 校验。
-- [get-wandb-data-from-chrome-cookie](Tools/Downloader/get-wandb-data-from-chrome-cookie/)：下载 W&B 运行数据。
-- [wechat-get-data](Tools/Downloader/wechat-get-data/)：读取 Linux 本地微信记录并恢复表情。
-- [youtube-download](Tools/Downloader/youtube-download/)：下载视频、音频和双语字幕。
-- [yuketang-background](Tools/yuketang-background/)：管理雨课堂课程任务。
-
-#### LLM
-
-以下 skills 位于 `Tools/LLM/`。
-
-- [commandcode-tools](Tools/LLM/commandcode-tools/)：查询 Command Code 用量并配置服务提供商。
-- [dsh-tools](Tools/LLM/dsh-tools/)：检查 DSH 依赖，为 Web 和 TUI 配置 API 接入。
-- [opencode-tools](Tools/LLM/opencode-tools/)：查询 OpenCode 用量和费用。
-- [token-usage](Tools/LLM/token-usage/)：部署和维护 Token 用量网页及采集器。

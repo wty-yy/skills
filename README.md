@@ -4,6 +4,34 @@ Skills I use for coding, writing, and everyday tasks.
 
 English | [简体中文](README.zh-CN.md)
 
+## Skills
+
+Categories follow `<category>/<skill>/SKILL.md`; the installers discover them automatically.
+
+### Coding
+
+- [code-simplifier](Coding/code-simplifier/): simplify code without changing behavior.
+- [no-ai-slop](Coding/no-ai-slop/): edit writing to remove AI patterns.
+- [python-docstring-standard](Coding/python-docstring-standard/): standardize Python docstrings.
+- [writing-a-project-proposal](Coding/writing-a-project-proposal/): draft Chinese project proposals.
+- [wty-markdown-standards](Coding/wty-markdown-standards/): format Markdown documentation and changelogs.
+
+### Tools
+
+- [build-vps](Tools/build-vps/): set up VPS access, proxy nodes, and Clash Verge subscriptions with bandwidth usage and automatic rules.
+- [cloud189-download](Tools/Downloader/cloud189-download/): download Tianyi Cloud folders with resumable ranges and MD5 verification.
+- [get-wandb-data-from-chrome-cookie](Tools/Downloader/get-wandb-data-from-chrome-cookie/): download W&B run data.
+- [wechat-get-data](Tools/Downloader/wechat-get-data/): read local Linux WeChat records and recover emoji.
+- [youtube-download](Tools/Downloader/youtube-download/): download videos, audio, and bilingual subtitles.
+- [yuketang-background](Tools/yuketang-background/): manage Yuketang course tasks.
+
+#### LLM
+
+- [commandcode-tools](Tools/LLM/commandcode-tools/): check Command Code usage and configure its provider.
+- [dsh-tools](Tools/LLM/dsh-tools/): check DSH prerequisites and configure API access for Web and TUI.
+- [opencode-tools](Tools/LLM/opencode-tools/): check OpenCode usage and costs.
+- [token-usage](Tools/LLM/token-usage/): deploy and maintain the Token usage dashboard and collectors.
+
 ## Usage
 
 Clone once and keep the checkout; installed skills link to it.
@@ -85,33 +113,3 @@ Use `--global-instructions` (PowerShell: `-GlobalInstructions`) to preselect thi
 Installation replaces same-named items. Deselecting or uninstalling removes only this repository's links. Update with `git pull`, then rerun the installer for new or moved skills.
 
 Installing `opencode-tools`, `token-usage`, or `wechat-get-data` also removes this repository's corresponding old `check-opencode-usage`, `token_usage`, or `wechat_get_data` links. Existing old-name installations preselect their replacements; unrelated files, directories, and links are preserved.
-
-## Skills
-
-Categories follow `<category>/<skill>/SKILL.md`; the installers discover them automatically.
-
-### Coding
-
-- [code-simplifier](Coding/code-simplifier/): simplify code without changing behavior.
-- [no-ai-slop](Coding/no-ai-slop/): edit writing to remove AI patterns.
-- [python-docstring-standard](Coding/python-docstring-standard/): standardize Python docstrings.
-- [writing-a-project-proposal](Coding/writing-a-project-proposal/): draft Chinese project proposals.
-- [wty-markdown-standards](Coding/wty-markdown-standards/): format Markdown documentation and changelogs.
-
-### Tools
-
-- [build-vps](Tools/build-vps/): set up VPS access, proxy nodes, and Clash Verge subscriptions with bandwidth usage and automatic rules.
-- [cloud189-download](Tools/Downloader/cloud189-download/): download Tianyi Cloud folders with resumable ranges and MD5 verification.
-- [get-wandb-data-from-chrome-cookie](Tools/Downloader/get-wandb-data-from-chrome-cookie/): download W&B run data.
-- [wechat-get-data](Tools/Downloader/wechat-get-data/): read local Linux WeChat records and recover emoji.
-- [youtube-download](Tools/Downloader/youtube-download/): download videos, audio, and bilingual subtitles.
-- [yuketang-background](Tools/yuketang-background/): manage Yuketang course tasks.
-
-#### LLM
-
-These skills live under `Tools/LLM/`.
-
-- [commandcode-tools](Tools/LLM/commandcode-tools/): check Command Code usage and configure its provider.
-- [dsh-tools](Tools/LLM/dsh-tools/): check DSH prerequisites and configure API access for Web and TUI.
-- [opencode-tools](Tools/LLM/opencode-tools/): check OpenCode usage and costs.
-- [token-usage](Tools/LLM/token-usage/): deploy and maintain the Token usage dashboard and collectors.
