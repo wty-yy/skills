@@ -1,0 +1,11 @@
+- id: llm-pi-ai
+  name: '@deepseek-ai/dsh-llm-pi-ai'
+  config:
+    providers:
+      opencode-go:
+        displayName: OpenCode Go
+        apiKeyEnv: OPENCODE_GO_API_KEY
+        baseURL: https://opencode.ai/zen/go/v1
+        models:
+        - id: deepseek-v4.1-flash
+        - id: deepseek-v4-pro

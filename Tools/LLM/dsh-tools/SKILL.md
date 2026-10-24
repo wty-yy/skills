@@ -1,11 +1,11 @@
 ---
 name: dsh-tools
-description: Check and install npm-based DeepSeek Harness prerequisites (dsh, dsh-tui, and pnpm), then connect the user's API provider across DSH Web and TUI profiles. Currently supports Command Code GOAT, including credentials, model catalogs, Responses routing, and transport troubleshooting. Use for DSH setup and API configuration, not Command Code billing reports or opencode setup.
+description: Check and install npm-based DeepSeek Harness prerequisites (dsh, dsh-tui, and pnpm), then connect Command Code GOAT or OpenCode Go APIs across DSH Web and TUI profiles. Includes credentials, model discovery, protocol routing, and connection verification. Use for DSH setup and API configuration, not provider billing reports or configuring the OpenCode app itself.
 ---
 
 # DSH Tools
 
-Configure DeepSeek Harness and its terminal interface together. Reuse the user's provider, key, model preference, and existing installation when already known. Ask for the API provider only if unspecified; continue prerequisite checks while waiting. Currently supported: **Command Code GOAT**. For another provider, request its endpoint, protocol, and model details rather than applying the Command Code template.
+Configure DeepSeek Harness and its terminal interface together. Reuse the user's provider, key, model preference, and existing installation when already known. Ask for the API provider only if unspecified; continue prerequisite checks while waiting. Supported providers: **Command Code GOAT** and **OpenCode Go**. For another provider, inspect available configuration before requesting missing endpoint, protocol, or model details.
 
 ## 1. Check and install prerequisites
 
@@ -67,22 +67,25 @@ This is per-user TUI state, separate from `DSH_HOME` and Cordis profile settings
 
 ## 3. Connect the selected provider
 
-For Command Code, read [references/commandcode.md](references/commandcode.md). Use [references/commandcode.patch.yml](references/commandcode.patch.yml) as the credential-free configuration seed, then reconcile its model snapshot with the current provider catalog. Merge the relevant entries into each target profile rather than replacing entire patch files.
+Read only the selected provider's reference and reconcile its credential-free seed with the current catalog:
 
-Keep API keys in DSH's managed `$DSH_HOME/.credentials.yaml`, under `refs.COMMANDCODE_API_KEY`, with POSIX mode `600`. Merge with existing `version`, `refs`, and `records`; preserve other credentials. Write changes atomically and never display the original document or any key value. Use a provided key, an existing stored reference, or a masked input; keep keys out of command-line arguments, shell history, skill files, and examples. If a key is still missing, prepare the non-secret configuration and ask for it; do not claim a connection was verified.
+- **Command Code GOAT:** [references/commandcode.md](references/commandcode.md) and [references/commandcode.patch.yml](references/commandcode.patch.yml); credential reference `COMMANDCODE_API_KEY`.
+- **OpenCode Go:** [references/opencode-go.md](references/opencode-go.md) and [references/opencode-go.patch.yml](references/opencode-go.patch.yml); credential reference `OPENCODE_GO_API_KEY`. Use the native `opencode-go` route without an explicit `api` to preserve its per-conversation session header.
 
-The shipped default is `commandcode-responses` / `deepseek/deepseek-v4.1-flash` / `high`, unless the user chooses otherwise. Preserve the separate Chat Completions and Claude routes for other models. Do not change existing permissions, sandbox, or approval policy as part of provider setup.
+Merge the relevant entries into each target profile rather than replacing entire patch files. Keep API keys in DSH's managed `$DSH_HOME/.credentials.yaml`, under the selected `refs` name, with POSIX mode `600`. Merge with existing `version`, `refs`, and `records`; preserve other credentials. Write changes atomically and never display the original document or any key value. Use a provided key, an existing stored reference, or a masked input; keep keys out of command-line arguments, shell history, skill files, and examples. If a key is still missing, prepare the non-secret configuration and ask for it; do not claim a connection was verified.
+
+When adding a provider, preserve the existing default unless the user asks to switch it. For a new setup without a chosen default, the Command Code seed selects `commandcode-responses` / `deepseek/deepseek-v4.1-flash` / `high`; OpenCode Go uses `opencode-go` / `deepseek-v4.1-flash` / `high` after confirming catalog availability. Keep the providers' protocol and reasoning settings separate. Do not change existing permissions, sandbox, or approval policy as part of provider setup.
 
 ## 4. Verify both interfaces
 
 1. Dump `web`, `dsh-tui`, and any configured `headless` profile; confirm the provider routes, model, API protocol, and credential reference. Check the key's presence and file permissions without printing it. Confirm that the TUI first-run guide is marked complete at the installed wizard revision unless the user requested onboarding.
 2. Headless disables the managed credential plugin in the tested version. Add `- id: credentials` with `disabled: false` to **headless only** when it must use the saved key. Other profiles already mount the store. For older versions inspect their credential format and activation behavior first.
-3. Run one short real request, then a bounded multi-step tool test in a scratch directory. The latter must show completed tool results and a completed final answer; a short `OK` alone does not verify tool-history replay. Stop after successful checks; avoid testing every catalog model or retrying indefinitely.
+3. Run one short real request, then a bounded multi-step tool test in a scratch directory through the newly configured route. If the existing default differs, use a temporary `--patch` overlay for `agent-default-model` rather than changing the saved default. The latter test must show completed tool results and a completed final answer; a short `OK` alone does not verify tool-history replay. Stop after successful checks; avoid testing every catalog model or retrying indefinitely.
 
 ```bash
-# Runs small, billed requests through the configured default route.
-dsh headless --json 'Reply only OK. Do not call tools.'
-dsh headless --json 'Call bash four times sequentially, running pwd each time; wait for each result. Then explain merge sort briefly. Do not read or write any other files.'
+# Runs small, billed requests; route-check.yml selects the provider being verified.
+dsh headless --patch ./route-check.yml --json 'Reply only OK. Do not call tools.'
+dsh headless --patch ./route-check.yml --json 'Call bash four times sequentially, running pwd each time; wait for each result. Then explain merge sort briefly. Do not read or write any other files.'
 ```
 
-For the final response report configured profiles, default model/protocol, and actual checks performed. Start with `dsh web` or `dsh-tui`. An already-running app may need a restart; an existing conversation keeps its selected route, so use `/model` to select **Command Code DeepSeek (Responses)** or create a new session. Do not silently kill user processes, edit their session logs, or claim TUI interaction was checked when only its composed configuration was inspected.
+For the final response report configured profiles, available models/protocol, whether the default changed, and actual checks performed. Start with `dsh web` or `dsh-tui`. An already-running app may need a restart; an existing conversation keeps its selected route, so use `/model` to select the added provider's model. A new session uses the saved default. Do not silently kill user processes, edit their session logs, or claim TUI interaction was checked when only its composed configuration was inspected.

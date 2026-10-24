@@ -26,7 +26,7 @@ Use the credentials service when available. Otherwise edit with a round-trip YAM
 
 1. Back up each existing target `cordis.patch.yml`. Inspect the composed tree for the `llm-pi-ai`, `agent-default-model`, and `credentials` IDs.
 2. In `llm-pi-ai.config.providers`, merge the three named routes from the seed. Keep other routes. Preserve custom models and compatibility changes unless updating them is required for the requested connection; reconcile rather than blindly replacing an existing provider definition.
-3. Set `agent-default-model.config` to the chosen provider, model, and effort. The seed selects `commandcode-responses`, `deepseek/deepseek-v4.1-flash`, and `high`.
+3. For a new setup or an explicit default change, set `agent-default-model.config` to the chosen provider, model, and effort. The seed selects `commandcode-responses`, `deepseek/deepseek-v4.1-flash`, and `high`. When only adding a provider, leave the saved default intact and omit this seed entry from the merge.
 4. Repeat for `web`, `dsh-tui`, and the verification `headless` profile. Initialize a shipped headless profile with `dsh headless --dump-config` if needed. To use the managed store there, merge this separate override:
 
 ```yaml
