@@ -1,0 +1,4 @@
+interface:
+  display_name: "Coding Project Standards"
+  short_description: "检查并维护项目级 AGENTS.md，提示重复规范并补充实验与数据目录要求"
+  default_prompt: "Use $coding-project-standards to check my project-level AGENTS.md for existing experiment and data storage rules, flag overlaps for review, and add the standards if none exist."
