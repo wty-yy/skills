@@ -32,6 +32,7 @@ description: Check and update project-level AGENTS.md with AI experiment and bul
 - 数据名称简短说明内容，同一批数据的后续操作沿用原目录；已知将超过阈值的数据直接保存到该数据目录。
 - 实验中的大量数据从 `data/` 迁出，代码、图片和视频保留在原实验目录；避免在原位置保留重复数据副本。
 - 移动数据后，更新受影响的脚本路径或配置，确认实验仍能找到数据。
+- 在项目根目录的 `.gitignore` 中添加 `/debug_ai/` 和 `/debug_data/`，忽略这两个目录及其内容；保留现有规则，已有等效忽略规则时不重复添加。
 ```
 
 ## 输出要求
