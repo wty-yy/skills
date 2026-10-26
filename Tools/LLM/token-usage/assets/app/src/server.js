@@ -8,10 +8,10 @@ const crypto = require('node:crypto');
 const zlib = require('node:zlib');
 const { createHub } = require('../vendor/token-monitor/src/hub/server');
 const { currentHubBuild } = require('../vendor/token-monitor/src/shared/hubBuildIdentity');
-const { readJsonBody } = require('../vendor/token-monitor/src/shared/http');
+const { readJsonBody, MAX_JSON_BODY_BYTES } = require('../vendor/token-monitor/src/shared/http');
 const { readJson, writeJsonAtomic } = require('../vendor/token-monitor/src/shared/config');
 const { wantsMinimalResponse } = require('../vendor/token-monitor/src/shared/hubProtocol');
-const { publicUser, combinePeriods } = require('./public-data');
+const { publicUser, publicDeviceId, combinePeriods } = require('./public-data');
 const { HistoryArchive } = require('./archive');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -56,10 +56,14 @@ function readConfig(filename) {
 }
 
 async function createApp(options = {}) {
+  const dailyUploadLimitBytes = options.dailyUploadLimitBytes ?? 5_000_000_000;
+  if (!Number.isSafeInteger(dailyUploadLimitBytes) || dailyUploadLimitBytes <= 0) throw new Error('Daily upload limit must be a positive integer');
   const dataDir = options.dataDir || path.join(ROOT, 'data');
   fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const users = options.users || readConfig(options.configFile || process.env.TOKEN_USAGE_CONFIG || path.join(ROOT, 'config/users.json'));
   const archive = new HistoryArchive(path.join(dataDir, 'history.sqlite'));
+  const currentTime = () => options.now ? options.now() : Date.now();
+  archive.startUploadTracking(currentTime());
   const namesFile = path.join(dataDir, 'device-names.json');
   const deviceNames = readJson(namesFile, {});
   const nameKey = (userId, deviceId) => `${userId}\u0000${deviceId}`;
@@ -71,7 +75,7 @@ async function createApp(options = {}) {
   try {
     for (const user of users) {
       const hub = createHub({ host: '127.0.0.1', port: 0, secret: user.token,
-        dataFile: path.join(dataDir, `${user.id}.json`), syncSessionTitles: false });
+        dataFile: path.join(dataDir, `${user.id}.json`), syncSessionTitles: false, staleAfterMs: 2 * 60 * 60 * 1000 });
       await hub.start();
       hubs.set(user.id, hub);
       archive.capture(user.id, hub.getDevices());
@@ -115,6 +119,29 @@ async function createApp(options = {}) {
     return users.find((user) => crypto.timingSafeEqual(digest, crypto.createHash('sha256').update(user.token).digest()));
   }
 
+  function uploadSnapshot() {
+    const now = currentTime();
+    const day = new Date(now + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const { details, ...totals } = archive.readUploads(day);
+    const sum = (rows) => Object.fromEntries(['todayBytes', 'monthBytes', 'totalBytes'].map((key) => [key, rows.reduce((total, row) => total + row[key], 0)]));
+    return {
+      generatedAt: new Date(now).toISOString(), timeZone: 'Asia/Shanghai', day, month: day.slice(0, 7),
+      ...totals, dailyLimitBytes: dailyUploadLimitBytes,
+      remainingBytes: Math.max(0, dailyUploadLimitBytes - totals.todayBytes),
+      users: users.map((user) => {
+        const rows = details.filter((row) => row.user_id === user.id);
+        return {
+          id: user.id, name: user.name, ...sum(rows),
+          devices: hubs.get(user.id).getDevices().map((device, index) => ({
+            id: publicDeviceId(user.id, device.deviceId),
+            name: user.devices?.[device.deviceId] || deviceNames[nameKey(user.id, device.deviceId)] || `设备 ${String(index + 1).padStart(2, '0')}`,
+            ...sum(rows.filter((row) => row.device_id === device.deviceId))
+          }))
+        };
+      })
+    };
+  }
+
   function proxyToHub(req, res, user) {
     const upstream = http.request({ host: '127.0.0.1', port: hubs.get(user.id).server.address().port,
       method: req.method, path: req.url,
@@ -133,11 +160,46 @@ async function createApp(options = {}) {
   }
 
   async function ingest(req, res, user) {
+    const now = currentTime();
+    const shanghaiTime = now + 8 * 60 * 60 * 1000;
+    const day = new Date(shanghaiTime).toISOString().slice(0, 10);
+    // Reserve before reading, including concurrent requests. Chunked requests reserve
+    // the per-request maximum and return unused bytes when the stream closes.
+    const reserved = Number(req.headers['content-length'] ?? MAX_JSON_BODY_BYTES);
+    if (reserved > MAX_JSON_BODY_BYTES) return json(res, 413, { error: 'payload_too_large' });
+    if (!archive.reserveUpload(day, reserved, dailyUploadLimitBytes)) {
+      res.setHeader('retry-after', String(Math.ceil((86400000 - shanghaiTime % 86400000) / 1000)));
+      return json(res, 429, { error: 'daily_upload_limit', limitBytes: dailyUploadLimitBytes, day, timeZone: 'Asia/Shanghai' });
+    }
+    let received = 0;
+    let settled = false;
+    let finished = false;
+    let recorded = false;
+    let deviceId = '';
+    req.on('data', (chunk) => { received += Buffer.byteLength(chunk); });
+    const recordTraffic = () => {
+      if (!settled || !finished || recorded) return;
+      recorded = true;
+      archive.recordUpload(day, user.id, deviceId, received);
+    };
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      archive.releaseUpload(day, Math.max(0, reserved - received));
+      recordTraffic();
+    };
+    req.once('end', settle);
+    req.once('close', () => {
+      if (!req.complete) finished = true;
+      settle();
+      recordTraffic();
+    });
     try {
       const payload = await readJsonBody(req);
       if (Object.hasOwn(payload, 'displayName') && typeof payload.displayName !== 'string') throw new Error('displayName must be a string');
       const hub = hubs.get(user.id);
       const record = hub.ingest(payload);
+      deviceId = record.deviceId;
       if (Object.hasOwn(payload, 'displayName')) {
         const name = Array.from(payload.displayName.replace(/[\x00-\x1f\x7f]/g, ' ').trim()).slice(0, 80).join('');
         const key = nameKey(user.id, record.deviceId);
@@ -150,6 +212,9 @@ async function createApp(options = {}) {
       return json(res, 200, wantsMinimalResponse(req) ? response : { ...response, stats: hub.getStats() });
     } catch (error) {
       return json(res, error.code === 'payload_too_large' ? 413 : 400, { error: 'bad_request', message: error.message });
+    } finally {
+      finished = true;
+      recordTraffic();
     }
   }
 
@@ -161,7 +226,19 @@ async function createApp(options = {}) {
       ok: true, role: 'hub', runtime: 'node-hub', version: 1, hubBuild: currentHubBuild('node-hub'),
       secretRequired: true, now: new Date().toISOString()
     });
-    if (url.pathname === '/api/public/stats' && req.method === 'GET') return json(res, 200, publicSnapshot());
+    if (url.pathname === '/api/public/stats' && req.method === 'GET') {
+      const value = publicSnapshot();
+      const etag = 'W/"' + crypto.createHash('sha256').update(JSON.stringify({ ...value, generatedAt: undefined })).digest('hex').slice(0, 24) + '"';
+      const cache = 'public, max-age=60, s-maxage=300, stale-while-revalidate=60';
+      res.setHeader('etag', etag);
+      res.setHeader('vary', 'Accept-Encoding');
+      if (req.headers['if-none-match'] === etag) {
+        res.writeHead(304, { 'cache-control': cache });
+        return res.end();
+      }
+      return json(res, 200, value, cache);
+    }
+    if (url.pathname === '/api/public/uploads' && req.method === 'GET') return json(res, 200, uploadSnapshot());
     if (url.pathname.startsWith('/api/')) {
       const user = authorizedUser(req);
       if (!user) return json(res, 401, { error: 'unauthorized' });
@@ -181,7 +258,7 @@ async function createApp(options = {}) {
     }
     res.writeHead(200, {
       'content-type': file[1], 'content-length': body.length,
-      'cache-control': 'no-cache', 'x-content-type-options': 'nosniff',
+      'cache-control': file[0] === 'index.html' ? 'no-cache' : url.searchParams.has('v') ? 'public, max-age=31536000, immutable' : 'public, max-age=86400', 'x-content-type-options': 'nosniff',
       'referrer-policy': 'strict-origin-when-cross-origin',
       'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'"
     });

@@ -23,6 +23,10 @@ function publicPeriod(value = {}) {
   };
 }
 
+function publicDeviceId(userId, deviceId) {
+  return crypto.createHash('sha256').update(`${userId}:${deviceId}`).digest('hex').slice(0, 16);
+}
+
 function publicUser(user, hub, deviceName = () => '', deviceHistory = () => undefined) {
   const stats = hub.getStats();
   const records = hub.getDevices();
@@ -34,7 +38,7 @@ function publicUser(user, hub, deviceName = () => '', deviceHistory = () => unde
       const record = records.find((entry) => entry.deviceId === device.deviceId);
       const periods = aggregateDevices([record]).periods;
       return {
-      id: crypto.createHash('sha256').update(`${user.id}:${device.deviceId}`).digest('hex').slice(0, 16),
+      id: publicDeviceId(user.id, device.deviceId),
       name: user.devices?.[device.deviceId] || deviceName(device.deviceId) || `设备 ${String(index + 1).padStart(2, '0')}`,
       platform: String(device.platform || 'unknown').slice(0, 40),
       updatedAt: device.receivedAt || device.updatedAt || null,
@@ -82,4 +86,4 @@ function historyRow(row, key = 'date') {
   };
 }
 
-module.exports = { number, publicPeriod, publicUser, combinePeriods, historyRow };
+module.exports = { number, publicPeriod, publicUser, publicDeviceId, combinePeriods, historyRow };

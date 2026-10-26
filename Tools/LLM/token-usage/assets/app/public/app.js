@@ -1,6 +1,10 @@
 'use strict';
 
 const ZH = {
+  "Reported data": "上报数据量",
+  "Measured as report request body bytes received by the server; excludes HTTP/TLS overhead.": "按服务端接收的上报请求体字节统计，不含 HTTP/TLS 开销。",
+  "Today": "今日",
+  "Traffic unavailable. Last recorded values shown.": "流量查询失败，保留上次数据。",
   "All devices": "全部设备",
   "Device filter": "设备筛选",
   "OVERVIEW": "总览",
@@ -69,7 +73,7 @@ const ZH = {
   "Status": "状态",
   "Public · read only": "公开 · 只读",
   "Cost is estimated": "费用按模型价格估算",
-  "Auto-refresh 30s": "每30秒更新",
+  "Auto-refresh 10min": "每10分钟更新",
   "Blue": "蓝色",
   "Green": "绿色",
   "Teal": "青色",
@@ -119,6 +123,11 @@ const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&
 const compact = (value) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value || 0);
 const exact = (value) => new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value || 0);
 const money = (value) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: value >= 1000 ? 'compact' : 'standard', maximumFractionDigits: 2 }).format(value || 0);
+const bytes = (value) => {
+  if (value === undefined) return '—';
+  const unit = Math.min(4, Math.floor(Math.log10(Math.max(1, value)) / 3));
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: unit ? 2 : 0 }).format(value / 1000 ** unit) + ' ' + ['B', 'KB', 'MB', 'GB', 'TB'][unit];
+};
 const LABELS = { codex: 'Codex CLI', claude: 'Claude Code', opencode: 'OpenCode', cursor: 'Cursor', openclaw: 'OpenClaw', copilot: 'Copilot', gemini: 'Gemini CLI', grok: 'Grok Build', commandcode: 'Command Code' };
 const PALETTES = {
   Blue: ['#202633', '#1d3d70', '#255cb0', '#277fe8', '#62a4ff'], Green: ['#202b29', '#14452c', '#206b3e', '#2ba558', '#53d47c'],
@@ -230,6 +239,7 @@ function renderProfile() {
   $('summary-cost').textContent = all.unpricedTokens && !all.costUsd ? '—' : money(all.costUsd);
   $('summary-days').textContent = [...mergeRows()].filter(([date, row]) => date >= shift(today(), -364) && date <= today() && row.tokens > 0).length;
   $('summary-devices').textContent = devices.length; $('display-timezone').textContent = timezone();
+  renderUploadSummary();
   $('device-select').innerHTML = `<option value="all">${t('All devices')}</option>` + availableDevices().map((device) => `<option value="${esc(device.id)}">${esc((state.user === 'all' ? device.owner + ' · ' : '') + device.name)}</option>`).join('');
   $('device-select').value = state.device;
   $('device-select').setAttribute('aria-label', t('Device filter'));
@@ -426,10 +436,45 @@ function renderModels() {
   $('models-empty').hidden = models.length > 0;
 }
 
+let uploadData = null;
+let uploadFetching = false;
+let uploadFailed = false;
+
+function renderUploadSummary() {
+  const selected = new Set(users().flatMap((user) => user.devices.map((device) => device.id)));
+  const devices = (uploadData?.users || []).flatMap((user) => user.devices).filter((device) => selected.has(device.id));
+  for (const [id, key] of [['summary-upload-today', 'todayBytes'], ['summary-upload-month', 'monthBytes']]) {
+    const total = devices.reduce((sum, device) => sum + device[key], 0);
+    $(id).textContent = uploadData ? bytes(total) : '—';
+    $(id).title = uploadData ? exact(total) + ' B' : '';
+  }
+  $('summary-upload').title = uploadFailed ? t('Traffic unavailable. Last recorded values shown.') : uploadData ? new Date(uploadData.generatedAt).toLocaleString(state.lang === 'zh' ? 'zh-CN' : 'en-US', { timeZone: uploadData.timeZone }) : '';
+}
+
+async function refreshUploads() {
+  if (uploadFetching) return;
+  uploadFetching = true;
+  try {
+    const response = await fetch('/api/public/uploads', { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    uploadData = await response.json(); uploadFailed = false;
+  } catch { uploadFailed = true; }
+  finally {
+    uploadFetching = false;
+    if (state.data) { renderUploadSummary(); renderDevices(); }
+  }
+}
+
 function renderDevices() {
   const list = users().flatMap((user) => user.devices.map((device) => ({ ...device, owner: user.name })));
   $('devices-total').textContent = list.length + ' ' + t('connected'); $('devices-empty').hidden = list.length > 0;
-  $('devices-list').innerHTML = list.map((device) => `<tr><td><span class="device-title">${esc(device.name)}</span><span class="device-subtitle">${esc(device.platform)} · ${t('Last synced')} ${relative(device.updatedAt)}</span></td><td>${esc(device.owner)}</td><td><span class="status-pill${device.stale ? ' stale' : ''}">${t(device.stale ? 'Awaiting sync' : 'Synced')}</span></td><td title="${exact(device.periods.allTime.totalTokens)}">${compact(device.periods.allTime.totalTokens)}</td><td>${money(device.periods.allTime.costUsd)}</td><td>${device.activeDays ?? '—'}</td></tr>`).join('');
+  const deviceUploads = new Map((uploadData?.users || []).flatMap((user) => user.devices.map((device) => [device.id, device])));
+  $('devices-list').innerHTML = list.map((device) => {
+    const traffic = deviceUploads.get(device.id);
+    const trafficTitle = uploadFailed ? t('Traffic unavailable. Last recorded values shown.') : uploadData ? new Date(uploadData.generatedAt).toLocaleString(state.lang === 'zh' ? 'zh-CN' : 'en-US', { timeZone: uploadData.timeZone }) : '';
+    const trafficRows = [['Today', 'todayBytes'], ['This month', 'monthBytes']].map(([label, key]) => `<span class="device-upload-line"><span>${t(label)}</span><strong title="${traffic ? exact(traffic[key]) + ' B' : ''}">${bytes(traffic?.[key])}</strong></span>`).join('');
+    return `<tr><td><span class="device-title">${esc(device.name)}</span><span class="device-subtitle">${esc(device.platform)} · ${t('Last synced')} ${relative(device.updatedAt)}</span></td><td>${esc(device.owner)}</td><td><span class="status-pill${device.stale ? ' stale' : ''}">${t(device.stale ? 'Awaiting sync' : 'Synced')}</span></td><td title="${exact(device.periods.allTime.totalTokens)}">${compact(device.periods.allTime.totalTokens)}</td><td>${money(device.periods.allTime.costUsd)}</td><td>${device.activeDays ?? '—'}</td><td class="device-upload-cell" title="${esc(trafficTitle)}">${trafficRows}</td></tr>`;
+  }).join('');
 }
 
 function renderControls() {
@@ -448,7 +493,7 @@ function render() {
 async function refresh() {
   if (state.fetching) return; state.fetching = true; $('refresh').disabled = true;
   try {
-    const response = await fetch('/api/public/stats', { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+    const response = await fetch('/api/public/stats', { cache: 'no-cache', signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw new Error('HTTP ' + response.status);
     state.data = await response.json(); render(); $('notice').hidden = true;
   } catch { $('notice').textContent = t(state.data ? 'Connection interrupted. Showing the last synced data.' : 'Unable to load usage. Please refresh later.'); $('notice').hidden = false; }
@@ -480,17 +525,19 @@ $('usage-chart').addEventListener('click', (event) => { const index = chartIndex
 $('usage-chart').addEventListener('keydown', (event) => { let index = Number(event.currentTarget.dataset.index || 0); if (event.key === 'ArrowRight') index++; else if (event.key === 'ArrowLeft') index--; else if (event.key === 'Home') index = 0; else if (event.key === 'End') index = state.chartRows.length - 1; else if (event.key === 'Escape') { hideChartTooltip(); return; } else return; event.preventDefault(); inspectChart(Math.max(0, Math.min(state.chartRows.length - 1, index))); });
 document.addEventListener('pointerdown', (event) => { if (!event.target.closest('#usage-chart,#chart-tooltip')) hideChartTooltip(); });
 $('heatmap').addEventListener('keydown', (event) => { const delta = { ArrowLeft: -7, ArrowRight: 7, ArrowUp: -1, ArrowDown: 1 }[event.key]; if (delta === undefined && !['Home', 'End'].includes(event.key)) return; event.preventDefault(); const { start, end } = heatDays(); state.day = event.key === 'Home' ? start : event.key === 'End' ? end : shift(state.day, delta); if (state.day < start) state.day = start; if (state.day > end) state.day = end; renderHeat(); renderDay(); document.querySelector(`[data-day="${state.day}"]`)?.focus(); });
-$('refresh').addEventListener('click', refresh);
+$('refresh').addEventListener('click', () => { refresh(); refreshUploads(); });
 $('share').addEventListener('click', async () => { try { await navigator.clipboard.writeText(location.href); $('share').innerHTML = t('Copied'); setTimeout(() => { $('share').innerHTML = '↗ <span data-i18n="Share">' + t('Share') + '</span>'; }, 1500); } catch { $('notice').textContent = t('Page URL') + ': ' + location.href; $('notice').hidden = false; } });
 window.addEventListener('resize', () => { if (state.data) renderChart(); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
-setInterval(() => { if (!document.hidden) refresh(); }, 30000);
+setInterval(() => { if (!document.hidden) refresh(); }, 600000);
 refresh();
+refreshUploads();
 
 function translatePage() {
   document.documentElement.lang = state.lang === 'zh' ? 'zh-CN' : 'en';
   document.documentElement.dataset.theme = state.theme;
   document.querySelectorAll('[data-i18n]').forEach((element) => { element.textContent = t(element.dataset.i18n); });
+  document.querySelectorAll('[data-i18n-title]').forEach((element) => { element.title = t(element.dataset.i18nTitle); });
   $('language-toggle').textContent = state.lang === 'zh' ? 'EN' : '中文';
   $('language-toggle').title = t('Switch language');
   $('theme-toggle').textContent = state.theme === 'dark' ? '☀' : '☾';

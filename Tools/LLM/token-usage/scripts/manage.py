@@ -119,8 +119,10 @@ def server(args):
             raise ValueError('Invalid existing user ID')
         env = f'TOKEN_MONITOR_HUB_URL={public_url}\nTOKEN_MONITOR_SECRET={user["token"]}\nTOKEN_MONITOR_PROJECTS_ENABLED=0\nTOKEN_MONITOR_SYNC_SESSION_TITLES=0\n'
         write(root / f'config/{identifier}-agent.env', env, 0o600)
-    deployment = {'publicUrl': public_url, 'timeZone': args.timezone}
+    deployment = {'publicUrl': public_url, 'timeZone': args.timezone, 'port': args.port}
     write(root / 'config/deployment.json', json.dumps(deployment, indent=2) + '\n')
+    worker = root / 'deploy/cf-worker.mjs'
+    write(worker, worker.read_text().replace("'usage.example.com'", json.dumps(urlsplit(public_url).hostname)))
     settings = [
         ('Type', 'simple'), ('WorkingDirectory', str(root).replace('%', '%%')),
         ('Environment', quoted('TZ=' + args.timezone)), ('Environment', 'NODE_ENV=production'),
@@ -145,6 +147,18 @@ def server(args):
     timer += unit_section('Timer', [('OnCalendar', '*-*-* 04:20:00'), ('Persistent', 'true'), ('RandomizedDelaySec', '300')])
     timer += unit_section('Install', [('WantedBy', 'timers.target')])
     write(root / f'deploy/{name}-backup.timer', timer)
+    push = unit_section('Unit', [('Description', 'Push Token Usage public snapshot to Cloudflare'), ('After', f'network-online.target {name}.service'), ('Wants', 'network-online.target')])
+    push += unit_section('Service', [
+        ('Type', 'oneshot'), ('WorkingDirectory', str(root).replace('%', '%%')),
+        ('EnvironmentFile', quoted(root / 'config/cloudflare.env')),
+        ('ExecStart', f'/usr/bin/python3 {quoted(root / "deploy/cf-push.py")}'),
+        ('TimeoutStartSec', '240'), ('UMask', '0077')
+    ])
+    write(root / f'deploy/{name}-cf-push.service', push)
+    push_timer = unit_section('Unit', [('Description', 'Publish Token Usage to Cloudflare every ten minutes')])
+    push_timer += unit_section('Timer', [('OnCalendar', '*:0/10'), ('RandomizedDelaySec', '10'), ('Persistent', 'true'), ('Unit', f'{name}-cf-push.service')])
+    push_timer += unit_section('Install', [('WantedBy', 'timers.target')])
+    write(root / f'deploy/{name}-cf-push.timer', push_timer)
     service = shlex.quote(name + '.service')
     write(root / 'deploy/reload-tls.sh', f'#!/bin/sh\nset -eu\nif systemctl is-active --quiet {service}; then\n  systemctl reload {service}\nfi\n', 0o700)
     print(f'Prepared server: {root}; {len(users)} users; public URL {public_url}')

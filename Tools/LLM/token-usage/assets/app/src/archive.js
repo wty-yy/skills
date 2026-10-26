@@ -11,10 +11,58 @@ class HistoryArchive {
         user_id TEXT NOT NULL, device_id TEXT NOT NULL, kind TEXT NOT NULL,
         bucket TEXT NOT NULL, payload TEXT NOT NULL,
         PRIMARY KEY (user_id, device_id, kind, bucket)
+      );
+      CREATE TABLE IF NOT EXISTS upload_usage (
+        day TEXT PRIMARY KEY, bytes INTEGER NOT NULL CHECK(bytes >= 0)
+      );
+      CREATE TABLE IF NOT EXISTS upload_details (
+        day TEXT NOT NULL, user_id TEXT NOT NULL, device_id TEXT NOT NULL,
+        bytes INTEGER NOT NULL CHECK(bytes >= 0),
+        PRIMARY KEY (day, user_id, device_id)
+      );
+      CREATE TABLE IF NOT EXISTS upload_metadata (
+        key TEXT PRIMARY KEY, value TEXT NOT NULL
       );`);
     this.upsert = this.db.prepare(`INSERT INTO history VALUES (?, ?, ?, ?, ?)
       ON CONFLICT (user_id, device_id, kind, bucket) DO UPDATE SET payload=excluded.payload
       WHERE payload != excluded.payload`);
+    this.reserveUploadBytes = this.db.prepare(`INSERT INTO upload_usage VALUES (?, ?)
+      ON CONFLICT (day) DO UPDATE SET bytes=bytes+excluded.bytes
+      WHERE bytes+excluded.bytes <= ? RETURNING bytes`);
+    this.releaseUploadBytes = this.db.prepare('UPDATE upload_usage SET bytes=max(0, bytes-?) WHERE day=?');
+    this.addUploadBytes = this.db.prepare(`INSERT INTO upload_details VALUES (?, ?, ?, ?)
+      ON CONFLICT (day, user_id, device_id) DO UPDATE SET bytes=bytes+excluded.bytes`);
+  }
+
+  reserveUpload(day, bytes, limit) {
+    return bytes <= limit && this.reserveUploadBytes.get(day, bytes, limit) !== undefined;
+  }
+
+  releaseUpload(day, bytes) {
+    if (bytes > 0) this.releaseUploadBytes.run(bytes, day);
+  }
+
+  startUploadTracking(now) {
+    this.db.prepare("INSERT OR IGNORE INTO upload_metadata VALUES ('tracking_since', ?)").run(new Date(now).toISOString());
+  }
+
+  recordUpload(day, userId, deviceId, bytes) {
+    if (bytes > 0) this.addUploadBytes.run(day, userId, deviceId, bytes);
+  }
+
+  readUploads(day) {
+    const monthStart = day.slice(0, 7) + '-01';
+    const nextMonth = new Date(day.slice(0, 7) + '-01T00:00:00Z');
+    nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
+    const args = [day, monthStart, nextMonth.toISOString().slice(0, 10)];
+    const counters = `coalesce(sum(CASE WHEN day=? THEN bytes ELSE 0 END), 0) AS todayBytes,
+      coalesce(sum(CASE WHEN day>=? AND day<? THEN bytes ELSE 0 END), 0) AS monthBytes,
+      coalesce(sum(bytes), 0) AS totalBytes`;
+    return {
+      trackingSince: this.db.prepare("SELECT value FROM upload_metadata WHERE key='tracking_since'").get().value,
+      ...this.db.prepare(`SELECT ${counters} FROM upload_usage`).get(...args),
+      details: this.db.prepare(`SELECT user_id, device_id, ${counters} FROM upload_details GROUP BY user_id, device_id`).all(...args)
+    };
   }
 
   capture(userId, devices) {
