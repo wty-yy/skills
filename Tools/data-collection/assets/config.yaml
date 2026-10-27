@@ -1,0 +1,9 @@
+# Deployment identity and GPU memory reserve.
+# deploy.sh rewrites uid and gpu_uuid for the chosen user and GPU.
+uid: 1000
+gpu_uuid: GPU-00000000-0000-0000-0000-000000000000
+reserve_mib: 1024
+startup_seconds: 30
+stable_seconds: 10
+idle_duty: 0.65
+shared_duty: 0.03

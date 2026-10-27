@@ -20,6 +20,7 @@ Categories follow `<category>/<skill>/SKILL.md`; the installers discover them au
 
 - [build-vps](Tools/build-vps/): set up VPS access, proxy nodes, and Clash Verge subscriptions with bandwidth usage and automatic rules.
 - [cloud189-download](Tools/Downloader/cloud189-download/): download Tianyi Cloud folders with resumable ranges and MD5 verification.
+- [data-collection](Tools/data-collection/): deploy a Docker service that reserves GPU memory for one host user.
 - [get-wandb-data-from-chrome-cookie](Tools/Downloader/get-wandb-data-from-chrome-cookie/): download W&B run data.
 - [wechat-get-data](Tools/Downloader/wechat-get-data/): read local Linux WeChat records and recover emoji.
 - [youtube-download](Tools/Downloader/youtube-download/): download videos, audio, and bilingual subtitles.

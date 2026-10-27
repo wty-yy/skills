@@ -20,6 +20,7 @@
 
 - [build-vps](Tools/build-vps/)：配置 VPS 访问、代理节点及 Clash Verge 订阅，支持流量用量和自动更新规则。
 - [cloud189-download](Tools/Downloader/cloud189-download/)：下载天翼云盘文件夹，支持断点续传和 MD5 校验。
+- [data-collection](Tools/data-collection/)：部署为指定用户预留 GPU 显存的 Docker 服务。
 - [get-wandb-data-from-chrome-cookie](Tools/Downloader/get-wandb-data-from-chrome-cookie/)：下载 W&B 运行数据。
 - [wechat-get-data](Tools/Downloader/wechat-get-data/)：读取 Linux 本地微信记录并恢复表情。
 - [youtube-download](Tools/Downloader/youtube-download/)：下载视频、音频和双语字幕。

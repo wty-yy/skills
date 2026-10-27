@@ -1,0 +1,6 @@
+*
+!Dockerfile
+!gpu_backend.py
+!data_collection.py
+!gpu_run.py
+!config.yaml

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Data Collection"
+  short_description: "Reserve GPU memory per user and GPU, deployed with Docker"
+  default_prompt: "Use $data-collection to deploy a GPU memory soft-reservation service for the specified user and GPU."
