@@ -54,7 +54,8 @@ class ConfigTests(unittest.TestCase):
                    ("startup_seconds", 0), ("stable_seconds", -1), ("restart_seconds", 0),
                    ("idle_duty", "0.42"), ("idle_duty", float("nan")),
                    ("idle_duty", 0.9), ("shared_duty", float("inf")), ("shared_duty", 0.9),
-                   ("uid", -1), ("uid", "1000"), ("uid", True), ("gpu_uuid", "0"),
+                   ("uids", []), ("uids", [-1]), ("uids", ["1000"]), ("uids", [True]),
+                   ("uids", 1000), ("gpu_uuid", "0"),
                    ("gpu_uuid", 0), ("gpu_uuid", "MIG-abc")]
         with tempfile.TemporaryDirectory() as directory:
             for name, value in invalid:
@@ -62,6 +63,26 @@ class ConfigTests(unittest.TestCase):
                     path = self.write_config(directory, dict(self.settings, **{name: value}))
                     with self.assertRaises(ValueError):
                         load_config(path)
+
+    def test_uid_and_uids_are_equivalent(self):
+        """Accept one uid or a list of uids for a card shared between users."""
+        with tempfile.TemporaryDirectory() as directory:
+            single = dict(self.settings)
+            single.pop("uids")
+            single["uid"] = 1000
+            self.assertEqual(load_config(self.write_config(directory, single))["uids"], [1000])
+            shared = dict(self.settings, uids=[1031, 1000])
+            self.assertEqual(load_config(self.write_config(directory, shared))["uids"], [1000, 1031])
+
+    def test_identity_must_appear_exactly_once(self):
+        """Reject configs that hold both uid and uids or neither of them."""
+        with tempfile.TemporaryDirectory() as directory:
+            neither = dict(self.settings)
+            neither.pop("uids")
+            for settings in (neither, dict(self.settings, uid=1000)):
+                with self.subTest(settings=settings):
+                    with self.assertRaises(ValueError):
+                        load_config(self.write_config(directory, settings))
 
     def test_unknown_and_missing_fields_are_rejected(self):
         """Catch misspelled settings instead of silently ignoring them."""
@@ -92,13 +113,20 @@ class WorkloadTests(unittest.TestCase):
         processes = [Process(4464, 0, 1, 4 * MIB, False),
                      Process(5000, 120, 1, 4 * MIB, False),
                      Process(6000, 1001, 1, 2 * GIB, True)]
-        self.assertEqual(own_processes(processes, 1021), [])
+        self.assertEqual(own_processes(processes, {1021}), [])
 
     def test_target_uid_counts(self):
         """Lower the duty cycle as soon as the configured user appears."""
         processes = [Process(4464, 0, 1, 4 * MIB, False),
                      Process(1950280, 1021, 1, 7 * GIB, True)]
-        self.assertEqual([p.pid for p in own_processes(processes, 1021)], [1950280])
+        self.assertEqual([p.pid for p in own_processes(processes, {1021})], [1950280])
+
+    def test_every_configured_uid_counts(self):
+        """Count jobs owned by any configured user, not just the first one."""
+        processes = [Process(1, 1000, 1, GIB, True),
+                     Process(2, 1031, 1, GIB, True),
+                     Process(3, 1001, 1, GIB, True)]
+        self.assertEqual([p.pid for p in own_processes(processes, {1000, 1031})], [1, 2])
 
 
 class SimulatedCuda(Cuda):
@@ -175,11 +203,18 @@ class PolicyTests(unittest.TestCase):
 
     def setUp(self):
         """Use short deterministic windows and a designated UID."""
-        self.policy = Policy(1000, startup=3, stable=2)
+        self.policy = Policy([1000], startup=3, stable=2)
 
     def update(self, processes, now, free=GIB):
         """Evaluate policy with a one-GiB free-memory floor."""
         return self.policy.update(processes, now, free, GIB)
+
+    def test_second_configured_uid_triggers_yield(self):
+        """Yield for a job owned by any configured user, not just the first."""
+        self.policy = Policy([1000, 1031], startup=3, stable=2)
+        job = Process(1, 1031, "a", GIB, True)
+        self.assertTrue(self.update([job], 0))
+        self.assertFalse(self.update([job], 3))
 
     def test_other_uid_and_graphics_do_not_trigger_yield(self):
         """Ignore a foreign CUDA job and the target user's desktop graphics context."""
@@ -260,11 +295,11 @@ class PolicyTests(unittest.TestCase):
 class SocketTests(unittest.TestCase):
     """Check actual kernel peer credentials and release-before-ack ordering."""
 
-    def request(self, uid):
+    def request(self, uids):
         """Connect to a real Unix socket using the test process's credentials."""
         cuda = SimulatedCuda(2 * GIB)
         cuda.reconcile(GIB)
-        service = Service(SimpleNamespace(uid=uid, startup_seconds=3,
+        service = Service(SimpleNamespace(uids=uids, startup_seconds=3,
                           stable_seconds=2, gpu_uuid="GPU-test"), None, cuda)
         with tempfile.TemporaryDirectory() as directory:
             with socket.socket(socket.AF_UNIX) as server, socket.socket(socket.AF_UNIX) as client:
@@ -278,13 +313,19 @@ class SocketTests(unittest.TestCase):
 
     def test_allowed_uid_has_memory_released_before_reply(self):
         """Allow the configured UID and return the selected GPU UUID."""
-        cuda, reply = self.request(os.getuid())
+        cuda, reply = self.request([os.getuid()])
+        self.assertEqual(reply, {"gpu_uuid": "GPU-test"})
+        self.assertEqual(cuda.held, 0)
+
+    def test_any_configured_uid_can_release(self):
+        """Accept any UID in the configured list, not only the first entry."""
+        cuda, reply = self.request([os.getuid() + 1, os.getuid()])
         self.assertEqual(reply, {"gpu_uuid": "GPU-test"})
         self.assertEqual(cuda.held, 0)
 
     def test_different_uid_cannot_release_memory(self):
         """Reject a different peer UID without changing reservations."""
-        cuda, reply = self.request(os.getuid() + 1)
+        cuda, reply = self.request([os.getuid() + 1])
         self.assertIn("error", reply)
         self.assertEqual(cuda.held, GIB)
 

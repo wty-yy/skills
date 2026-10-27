@@ -1,4 +1,4 @@
-"""Reserve one GPU's memory for a host UID and yield during workload startup.
+"""Reserve one GPU's memory for host UIDs and yield during workload startup.
 
 Quick Start:
     python3 data_collection.py --config /path/to/config.yaml
@@ -13,7 +13,7 @@ Notes:
     The service takes no identity or tuning arguments; it reads them from the
     config file so process listings never show deployment parameters.
     Soft reservation only. Use host PID namespace for UID attribution.
-    Only the configured target UID lowers the duty cycle; other users' jobs and
+    Only the configured target UIDs lower the duty cycle; other users' jobs and
     desktop infrastructure (root Xorg, gdm) leave the device in occupancy mode.
     Graphics workloads count towards shared mode but do not trigger UID yielding.
     The process exits after restart_seconds so the container rebuilds its context.
@@ -42,13 +42,13 @@ PR_SET_NAME = 15
 STABLE_DELTA = 1024 * MIB
 
 
-def own_processes(processes, target_uid):
-    """Keep only the configured user's processes for the duty decision.
+def own_processes(processes, target_uids):
+    """Keep only the configured users' processes for the duty decision.
 
     Desktop infrastructure and other users' jobs leave the card in occupancy
-    mode; only the target UID lowers the duty cycle.
+    mode; only the target UIDs lower the duty cycle.
     """
-    return [p for p in processes if p.uid == target_uid]
+    return [p for p in processes if p.uid in target_uids]
 
 
 def set_process_name(name):
@@ -57,11 +57,11 @@ def set_process_name(name):
 
 
 class Policy:
-    """Track startup windows and stable memory use for the designated UID."""
+    """Track startup windows and stable memory use for the designated UIDs."""
 
-    def __init__(self, uid, startup, stable):
+    def __init__(self, uids, startup, stable):
         """Configure the minimum startup and memory stabilization windows."""
-        self.uid, self.startup, self.stable = uid, startup, stable
+        self.uids, self.startup, self.stable = set(uids), startup, stable
         self.until = 0
         self.launch_until = 0
         self.last_change = float("-inf")
@@ -77,7 +77,7 @@ class Policy:
 
     def update(self, processes, now, free, reserve):
         """Yield for new target processes, growth, or pressure until usage stabilizes."""
-        target = [p for p in processes if p.compute and p.uid == self.uid]
+        target = [p for p in processes if p.compute and p.uid in self.uids]
         identities = {(p.pid, p.started) for p in target}
         memory = sum(p.memory for p in target)
         grew = memory > self.observed_memory
@@ -102,7 +102,8 @@ class Service:
     def __init__(self, options, monitor, cuda):
         """Keep all GPU operations on the CUDA context's owning thread."""
         self.options, self.monitor, self.cuda = options, monitor, cuda
-        self.policy = Policy(options.uid, options.startup_seconds, options.stable_seconds)
+        self.uids = frozenset(options.uids)
+        self.policy = Policy(self.uids, options.startup_seconds, options.stable_seconds)
         self.started = time.monotonic()
         self.running = True
 
@@ -121,7 +122,7 @@ class Service:
             _, uid, _ = struct.unpack("3i", connection.getsockopt(
                 socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))
             try:
-                if uid != self.options.uid:
+                if uid not in self.uids:
                     connection.sendall(b'{"error":"UID is not authorized"}\n')
                     return
                 self.cuda.release()
@@ -158,7 +159,7 @@ class Service:
             start = time.monotonic()
             self.accept(server)
             processes = self.monitor.processes()
-            workload = own_processes(processes, self.options.uid)
+            workload = own_processes(processes, self.uids)
             warmup = self.policy.update(processes, start, self.cuda.available(), reserve)
             if warmup:
                 self.cuda.release()
@@ -187,12 +188,18 @@ def load_config(path):
     """Read and validate the deployment identity and every tuning value."""
     with open(path, encoding="utf-8") as stream:
         settings = yaml.safe_load(stream)
-    fields = {"uid", "gpu_uuid", "reserve_mib", "startup_seconds", "stable_seconds",
+    fields = {"gpu_uuid", "reserve_mib", "startup_seconds", "stable_seconds",
               "restart_seconds", "idle_duty", "shared_duty"}
-    if not isinstance(settings, dict) or set(settings) != fields:
-        raise ValueError("config must contain exactly: " + ", ".join(sorted(fields)))
-    if type(settings["uid"]) is not int or settings["uid"] < 0:
-        raise ValueError("uid must be a nonnegative integer")
+    identities = {"uid", "uids"}
+    if not isinstance(settings, dict) or set(settings) - identities != fields:
+        raise ValueError("config must contain exactly: "
+                         + ", ".join(sorted(fields | {"uid"})) + " (uid or uids)")
+    if len(set(settings) & identities) != 1:
+        raise ValueError("config must hold either uid or uids")
+    uids = settings["uids"] if "uids" in settings else [settings["uid"]]
+    if not isinstance(uids, list) or not uids or any(type(item) is not int or item < 0
+                                                    for item in uids):
+        raise ValueError("uids must be a nonempty list of nonnegative integers")
     if not isinstance(settings["gpu_uuid"], str) or not settings["gpu_uuid"].startswith("GPU-"):
         raise ValueError("gpu_uuid must be a full physical GPU UUID (GPU-...)")
     for name in ("reserve_mib", "startup_seconds", "stable_seconds", "restart_seconds",
@@ -208,6 +215,8 @@ def load_config(path):
         raise ValueError("restart_seconds must be positive")
     if not (0 <= settings["idle_duty"] <= 0.8 and 0 <= settings["shared_duty"] <= 0.8):
         raise ValueError("idle_duty and shared_duty must be 0..0.8")
+    settings["uids"] = sorted(uids)
+    settings.pop("uid", None)
     return settings
 
 

@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
-# Build and start soft GPU reservations for one named host user and physical GPU.
-# Usage: bash deploy.sh USER GPU_ID [CONFIG_YAML]
+# Build and start soft GPU reservations for named host users and one physical GPU.
+# Usage: bash deploy.sh USER[,USER...] GPU_ID [CONFIG_YAML]
 set -euo pipefail
 
 if (( $# < 2 || $# > 3 )); then
-    echo "Usage: bash $0 USER GPU_ID [CONFIG_YAML]" >&2
+    echo "Usage: bash $0 USER[,USER...] GPU_ID [CONFIG_YAML]" >&2
     exit 2
 fi
-target_user="$1"
+target_users="$1"
 gpu_id="$2"
 if [[ ! "$gpu_id" =~ ^[0-9]+$ && ! "$gpu_id" =~ ^GPU-[[:xdigit:]-]+$ ]]; then
     echo 'GPU_ID must be a physical GPU index or full GPU UUID' >&2
     exit 2
 fi
-target_uid="$(id -u -- "$target_user")"
+IFS=',' read -r -a user_list <<< "$target_users"
+uids=()
+for user in "${user_list[@]}"; do
+    uids+=("$(id -u -- "$user")")
+done
 gpu_uuid="$(nvidia-smi -i "$gpu_id" --query-gpu=uuid --format=csv,noheader)"
 if [[ ! "$gpu_uuid" =~ ^GPU-[[:xdigit:]-]+$ ]]; then
     echo 'Expected exactly one physical GPU UUID' >&2
@@ -36,10 +40,10 @@ if docker container inspect "$container" >/dev/null 2>&1; then
     exit 1
 fi
 docker info >/dev/null
-# Resolve user and GPU into the config so the service needs no arguments at all.
+# Resolve users and GPU into the config so the service needs no arguments at all.
 mkdir -p "$state_dir"
-{ grep -vE '^[[:space:]]*(uid|gpu_uuid)[[:space:]]*:' "$config_file" || true; } > "$runtime_config"
-printf 'uid: %s\ngpu_uuid: %s\n' "$target_uid" "$gpu_uuid" >> "$runtime_config"
+{ grep -vE '^[[:space:]]*(uid|uids|gpu_uuid)[[:space:]]*:' "$config_file" || true; } > "$runtime_config"
+printf 'uids: [%s]\ngpu_uuid: %s\n' "$(IFS=,; echo "${uids[*]}")" "$gpu_uuid" >> "$runtime_config"
 docker build --tag "$image" "$skill_dir/assets"
 # Validate before starting the GPU service; this command never initializes CUDA.
 docker run --rm --network=none --read-only \
@@ -73,9 +77,9 @@ if [[ "$ready" != true ]]; then
     exit 1
 fi
 docker update --restart unless-stopped "$container" >/dev/null
-printf 'Container: %s\nUser: %s (UID %s)\nGPU: %s\nSocket: %s/control.sock\n' \
-    "$container" "$target_user" "$target_uid" "$gpu_uuid" "$socket_dir"
+printf 'Container: %s\nUsers: %s (UIDs %s)\nGPU: %s\nSocket: %s/control.sock\n' \
+    "$container" "$target_users" "${uids[*]}" "$gpu_uuid" "$socket_dir"
 printf 'Config: %s (generated from %s)\n' "$runtime_config" "$config_file"
 printf 'Launch as %s: python3 %q --socket %q -- COMMAND\n' \
-    "$target_user" "$skill_dir/assets/gpu_run.py" "$socket_dir/control.sock"
+    "$target_users" "$skill_dir/assets/gpu_run.py" "$socket_dir/control.sock"
 docker logs --tail 5 "$container"
