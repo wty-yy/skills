@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "assets"))
 from gpu_backend import Cuda, DriverError, GIB, MIB, Process
 import yaml
 
-from data_collection import Policy, Service, arguments, load_config
+from data_collection import Policy, Service, arguments, load_config, own_processes
 
 
 class ConfigTests(unittest.TestCase):
@@ -51,9 +51,9 @@ class ConfigTests(unittest.TestCase):
     def test_invalid_values_are_rejected(self):
         """Reject invalid types, nonfinite values, and settings outside valid ranges."""
         invalid = [("reserve_mib", True), ("reserve_mib", 63), ("reserve_mib", 1024.5),
-                   ("startup_seconds", 0), ("stable_seconds", -1),
+                   ("startup_seconds", 0), ("stable_seconds", -1), ("restart_seconds", 0),
                    ("idle_duty", "0.42"), ("idle_duty", float("nan")),
-                   ("idle_duty", 0.9), ("shared_duty", float("inf")), ("shared_duty", 0.1),
+                   ("idle_duty", 0.9), ("shared_duty", float("inf")), ("shared_duty", 0.9),
                    ("uid", -1), ("uid", "1000"), ("uid", True), ("gpu_uuid", "0"),
                    ("gpu_uuid", 0), ("gpu_uuid", "MIG-abc")]
         with tempfile.TemporaryDirectory() as directory:
@@ -82,6 +82,23 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaises(SystemExit) as error:
                     arguments([flag, "0"])
                 self.assertEqual(error.exception.code, 2)
+
+
+class WorkloadTests(unittest.TestCase):
+    """Verify that only the configured user lowers the duty cycle."""
+
+    def test_other_users_and_desktop_do_not_count(self):
+        """Keep occupying while root, gdm, or another user's job holds the device."""
+        processes = [Process(4464, 0, 1, 4 * MIB, False),
+                     Process(5000, 120, 1, 4 * MIB, False),
+                     Process(6000, 1001, 1, 2 * GIB, True)]
+        self.assertEqual(own_processes(processes, 1021), [])
+
+    def test_target_uid_counts(self):
+        """Lower the duty cycle as soon as the configured user appears."""
+        processes = [Process(4464, 0, 1, 4 * MIB, False),
+                     Process(1950280, 1021, 1, 7 * GIB, True)]
+        self.assertEqual([p.pid for p in own_processes(processes, 1021)], [1950280])
 
 
 class SimulatedCuda(Cuda):
@@ -176,11 +193,27 @@ class PolicyTests(unittest.TestCase):
         self.assertTrue(self.update([job], 0))
         self.assertTrue(self.update([job], 2))
         self.assertFalse(self.update([job], 3))
-        grown = Process(1, 1000, "a", GIB, True)
+        grown = Process(1, 1000, "a", 2 * GIB, True)
         self.assertTrue(self.update([grown], 4))
         self.assertTrue(self.update([grown], 5))
         self.assertFalse(self.update([grown], 6))
         self.assertFalse(self.update([], 7))
+
+    def test_sub_gib_fluctuation_stays_stable(self):
+        """Resume when target memory fluctuates by 1 GiB or less."""
+        job = Process(1, 1000, "a", 2 * GIB, True)
+        self.update([job], 0)
+        self.assertFalse(self.update([job], 3))
+        drifted = Process(1, 1000, "a", 3 * GIB, True)
+        self.assertFalse(self.update([drifted], 4))
+
+    def test_growth_above_one_gib_reopens_window(self):
+        """Restart the wait once target memory moves by more than 1 GiB."""
+        job = Process(1, 1000, "a", 2 * GIB, True)
+        self.update([job], 0)
+        self.assertFalse(self.update([job], 3))
+        grown = Process(1, 1000, "a", 3 * GIB + 1, True)
+        self.assertTrue(self.update([grown], 4))
 
     def test_launcher_yields_before_cuda_context_exists(self):
         """Honor a prelaunch request and reclaim after an unused window expires."""

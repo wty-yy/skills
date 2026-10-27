@@ -1,6 +1,6 @@
 ---
 name: data-collection
-description: Build, deploy, and troubleshoot a Docker-based soft GPU memory reservation service for a named host user and NVIDIA GPU. It keeps about 1 GiB of VRAM free, yields that memory when the user's program starts, and adjusts background load between exclusive and shared states. Use for GPU occupancy and dynamic VRAM reclamation; it does not provide strict per-user access control.
+description: Build, deploy, and troubleshoot a Docker-based soft GPU memory reservation service for a named host user and NVIDIA GPU. It keeps about 1 GiB of VRAM free, holds the rest against other users, releases everything when the configured user's own program starts growing, re-occupies a minute after that memory settles, and rebuilds its CUDA context every 12 hours. Use for GPU occupancy and dynamic VRAM reclamation; it does not provide strict per-user access control.
 ---
 
 # Data Collection
@@ -13,11 +13,13 @@ Deploy the service from the host username and GPU ID the user provides. The oper
 
 - Built on `ubuntu:24.04` with Python 3 and PyYAML, calling the host CUDA Driver API and NVML directly; no PyTorch or CUDA Toolkit is required.
 - Reserves 1024 MiB of free memory by default in 64 MiB chunks, settling at roughly 1024-1088 MiB free. When other users consume that headroom the service does not release reservations to top it up, so free memory may fall below 1 GiB.
-- With no other GPU processes present, the extra kernel duty cycle is 65%; with any compute or graphics process present it drops to about 3%. While the target user is inside a startup or memory-growth window, the extra load is 0.
-- GPU utilization means kernel activity time, so no single `nvidia-smi` sample is guaranteed. In shared mode 3% is this service's own extra activity target; whole-device utilization still includes other programs.
-- On a new CUDA process for the target UID, a clear memory change, or memory pressure that coincides with memory growth from that UID, the service releases every reservation it holds. The startup window is at least 30 seconds by default, reservations resume 10 seconds after memory stops changing, and they are reclaimed immediately once all observed target processes exit.
+- The duty cycle follows the configured UID alone. While that user holds no GPU process the service occupies the device at `idle_duty`, 65% by default, the usual 50-80% occupancy range; as soon as a process owned by that user appears it drops to `shared_duty`, 3% by default. Other users' jobs and desktop infrastructure (root `Xorg`, `gdm`) never lower the duty cycle, so the device stays occupied while someone else computes. While the target user is inside a startup or memory-growth window, the extra load is 0.
+- GPU utilization means kernel activity time, so no single `nvidia-smi` sample is guaranteed. In solo mode 65% and in shared mode 3% are this service's own extra activity targets; whole-device utilization still includes other programs.
+- The pulse kernel is a single 128-thread block per SM, so it looks busy without saturating the device. On an RTX 4090 a 4096-cubed fp16 matmul ran at 0.82 ms with the service at 65% duty and 0.86 ms without it, because the other process still finds free warp slots. What actually keeps other jobs off the card is the held memory, not SM time; occupancy-bound or bandwidth-bound kernels see more contention than that matmul.
+- On a new CUDA process for the target UID, a clear memory change, or memory pressure that coincides with memory growth from that UID, the service releases every reservation it holds. The startup window is at least 30 seconds by default, reservations resume 60 seconds after the target user's memory stops changing, where a change of 1 GiB or less counts as stable and a larger one restarts the wait, and they are reclaimed immediately once all observed target processes exit.
+- The process exits cleanly after `restart_seconds` of uptime, 12 hours by default, so the `unless-stopped` policy rebuilds the CUDA context on a schedule. The reservation is dropped during the restart; without target processes it re-arms within a second, and with a target job still running it waits out the startup and stability windows first.
 - After another user's process exits, the service keeps occupying the memory that was freed. It releases only its own allocations and never stops, pauses, or modifies other users' processes.
-- The target user's graphics processes count toward shared mode but never trigger a yield, so a desktop session cannot leave the service in a released state for long.
+- A graphics context held by the target user, such as their own desktop session, keeps the service in shared mode but never triggers a yield. Graphics contexts owned by root or the display manager are desktop infrastructure and are ignored entirely.
 
 ## Deployment
 
@@ -33,17 +35,28 @@ bash scripts/deploy.sh yy 0
 bash scripts/deploy.sh yy 0 /absolute/path/to/config.yaml
 ```
 
-Reservation size, load ratios, timings, the target UID, and the GPU UUID all live in [assets/config.yaml](assets/config.yaml). The service accepts no identity or tuning arguments, so nothing about the deployment appears in process listings. The config must contain every field below, with ratios as 0-1 decimals:
+Reservation size, load ratios, timings, the target UID, and the GPU UUID all live in [assets/config.yaml](assets/config.yaml). The service accepts no identity or tuning arguments, so nothing about the deployment appears in process listings. The config must contain every field below, with ratios as 0-1 decimals; `idle_duty` and `shared_duty` each accept anything up to 0.8.
 
 ```yaml
 uid: 1000
 gpu_uuid: GPU-...
 reserve_mib: 1024
 startup_seconds: 30
-stable_seconds: 10
+stable_seconds: 60
+restart_seconds: 43200
 idle_duty: 0.65
 shared_duty: 0.03
 ```
+
+| field | effect |
+| --- | --- |
+| `reserve_mib` | free memory to keep, 1024 by default. Raise it to 3072-4096 when the target user's job allocates in steps, otherwise that job can hit OOM after the window closes. |
+| `startup_seconds` | minimum release window after a launch request, 30 by default. Raise it for slow model loading. |
+| `stable_seconds` | quiet period before reservations come back, 60 by default. A change of 1 GiB or less counts as stable; anything larger restarts the wait. |
+| `restart_seconds` | clean exit that lets Docker rebuild the CUDA context, 43200 (12 hours) by default. |
+| `idle_duty` | extra load while the target UID holds no GPU process, 0.65 by default, the 50-80% occupancy range. |
+| `shared_duty` | extra load while the target UID does hold one, 0.03 by default. Setting it equal to `idle_duty` keeps the card occupied even during that user's own jobs. |
+| `uid`, `gpu_uuid` | written by the deploy script; never edit them by hand in a running deployment. |
 
 The deploy script resolves the username and GPU, writes `uid` and `gpu_uuid` into a generated copy at `./.state/<hash>/config.yaml`, validates it, then mounts that file read-only at `/opt/dataset-platform/data-collection/data/7e2fa4b1/config.yaml`, where the service looks for its default config. Tune a running deployment by editing that generated copy and restarting the container; there is no runtime hot reload. Administrators with the relevant Docker privileges can still read the config file and the logs.
 
@@ -64,6 +77,8 @@ python3 assets/gpu_run.py \
 The service verifies the caller's UID through `SO_PEERCRED` on the Unix socket. It returns confirmation only after releasing the reserved memory, then the launcher `exec`s the user command with `CUDA_VISIBLE_DEVICES` set to the target UUID. Inside the user's program the chosen card is therefore `cuda:0` even when its host index differs. Increase `startup_seconds` in the config for longer model loading.
 
 Running a user program directly is still detected automatically, but the first large allocation may fail with OOM. The monitor cannot intercept or retry another process's `cudaMalloc`, so a sudden large allocation after memory has stabilized carries the same race. Use the launcher with a sufficiently long startup window when the start must succeed.
+
+The same applies after the service has re-occupied. Once the target user's memory has been stable for `stable_seconds` the reservations are back down to `reserve_mib` free, so a later allocation larger than that headroom fails with OOM even though the process is still running and healthy. Measured case: a job holding 2.5 GiB tried to grow by 2 GiB a minute after launch and hit `CUDA out of memory ... 1.05 GiB is free`. Raise `reserve_mib` when the job allocates in steps, or start it through the launcher with a long enough startup window.
 
 Jobs inside containers need access to the host socket, the same host UID, and the chosen GPU. Use the in-container path `/run/data-collection/control.sock` only when connecting to the socket with `docker exec --user <target UID>` in the management container. Standalone job containers need the host socket directory and the launcher mounted separately; do not impersonate the target user with container root.
 
@@ -94,10 +109,14 @@ python3 scripts/test_container.py --user yy --gpu 0
 # inspect and stop; use the container name printed by the deployment
 docker logs --tail 50 CONTAINER
 docker stop --time 10 CONTAINER
+
+# confirm the scheduled restart is the reason uptime reset
+docker inspect --format '{{.State.StartedAt}} restarts={{.RestartCount}}' CONTAINER
+docker logs CONTAINER 2>&1 | grep -E "scheduled restart|state=
 ```
 
 Run the simulation tests and the small allocation test first. For an automated integration test on a shared desktop card, use a separate test config that keeps most memory free with `idle_duty: 0` and `shared_duty: 0`, run it briefly, then stop the test container. Run the full 1 GiB reservation mode only when the user asks to enable the service. Delivering this skill does not imply keeping a background container or installing into the global skills directory.
 
-Stopping the container destroys its CUDA context and returns all reserved memory; it does not destroy other processes' contexts. If a PID is unreadable, an NVML query fails, or a CUDA operation returns a non-OOM error, the service exits and the driver reclaims its allocations; check the logs and the host configuration before deciding to restart.
+A restart count above zero paired with a `scheduled restart after N seconds of uptime` line is the 12-hour rebuild, not a crash. Stopping the container destroys its CUDA context and returns all reserved memory; it does not destroy other processes' contexts. If a PID is unreadable, an NVML query fails, or a CUDA operation returns a non-OOM error, the service exits and the driver reclaims its allocations; check the logs and the host configuration before deciding to restart.
 
 Technical references: [NVIDIA container GPU selection](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/docker-specialized.html), [NVML device and process queries](https://docs.nvidia.com/deploy/nvml-api/latest/api/group__nvmlDeviceQueries.html), [CUDA memory allocation and free](https://docs.nvidia.com/cuda/cuda-driver-api/cuda_driver_api/group__CUDA__MEM.html).

@@ -4,6 +4,11 @@ uid: 1000
 gpu_uuid: GPU-00000000-0000-0000-0000-000000000000
 reserve_mib: 1024
 startup_seconds: 30
-stable_seconds: 10
+# Quiet period before re-reserving; a change of 1 GiB or less keeps it stable.
+stable_seconds: 60
+# Exit cleanly after this much uptime so the container rebuilds its CUDA context.
+restart_seconds: 43200
+# idle_duty applies unless the target UID itself holds a GPU process.
+# shared_duty applies while that user does; other users never lower the duty.
 idle_duty: 0.65
 shared_duty: 0.03

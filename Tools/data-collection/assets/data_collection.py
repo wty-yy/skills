@@ -13,7 +13,10 @@ Notes:
     The service takes no identity or tuning arguments; it reads them from the
     config file so process listings never show deployment parameters.
     Soft reservation only. Use host PID namespace for UID attribution.
+    Only the configured target UID lowers the duty cycle; other users' jobs and
+    desktop infrastructure (root Xorg, gdm) leave the device in occupancy mode.
     Graphics workloads count towards shared mode but do not trigger UID yielding.
+    The process exits after restart_seconds so the container rebuilds its context.
 """
 
 import argparse
@@ -35,6 +38,17 @@ from gpu_backend import Cuda, MIB, Monitor
 
 LOG = logging.getLogger("data-collection")
 PR_SET_NAME = 15
+# A target allocation change no larger than this counts as stable.
+STABLE_DELTA = 1024 * MIB
+
+
+def own_processes(processes, target_uid):
+    """Keep only the configured user's processes for the duty decision.
+
+    Desktop infrastructure and other users' jobs leave the card in occupancy
+    mode; only the target UID lowers the duty cycle.
+    """
+    return [p for p in processes if p.uid == target_uid]
 
 
 def set_process_name(name):
@@ -73,7 +87,7 @@ class Policy:
             self.launch_until = 0
         if self.identities and not identities:
             self.until = self.launch_until
-        if identities != self.identities or abs(memory - self.memory) >= 8 * MIB:
+        if identities != self.identities or abs(memory - self.memory) > STABLE_DELTA:
             self.last_change = now
             self.memory = memory
         if target and grew and free < reserve // 2:
@@ -89,6 +103,7 @@ class Service:
         """Keep all GPU operations on the CUDA context's owning thread."""
         self.options, self.monitor, self.cuda = options, monitor, cuda
         self.policy = Policy(options.uid, options.startup_seconds, options.stable_seconds)
+        self.started = time.monotonic()
         self.running = True
 
     def stop(self, signum, frame):
@@ -143,23 +158,28 @@ class Service:
             start = time.monotonic()
             self.accept(server)
             processes = self.monitor.processes()
+            workload = own_processes(processes, self.options.uid)
             warmup = self.policy.update(processes, start, self.cuda.available(), reserve)
             if warmup:
                 self.cuda.release()
                 duty, state = 0, "warmup"
             else:
                 self.cuda.reconcile(reserve)
-                duty = self.options.shared_duty if processes else self.options.idle_duty
-                state = "shared" if processes else "solo"
+                duty = self.options.shared_duty if workload else self.options.idle_duty
+                state = "shared" if workload else "solo"
             if state != previous or start - last_log >= 10:
-                LOG.info("state=%s held_mib=%d free_mib=%d extra_duty=%.0f%% pids=%s",
+                LOG.info("state=%s held_mib=%d free_mib=%d extra_duty=%.0f%% pids=%s others=%d",
                          state, self.cuda.held // MIB, self.cuda.available() // MIB,
-                         duty * 100, [p.pid for p in processes])
+                         duty * 100, [p.pid for p in workload], len(processes) - len(workload))
                 previous, last_log = state, start
             busy = 0
             # Account for actual kernel time, not time spent allocating memory.
             while self.running and busy < duty * 0.1 and time.monotonic() - start < 0.1:
                 busy += self.cuda.pulse()
+            if self.running and time.monotonic() - self.started >= self.options.restart_seconds:
+                LOG.info("scheduled restart after %.0f seconds of uptime",
+                         time.monotonic() - self.started)
+                self.running = False
             time.sleep(max(0, 0.1 - (time.monotonic() - start)))
 
 
@@ -168,14 +188,15 @@ def load_config(path):
     with open(path, encoding="utf-8") as stream:
         settings = yaml.safe_load(stream)
     fields = {"uid", "gpu_uuid", "reserve_mib", "startup_seconds", "stable_seconds",
-              "idle_duty", "shared_duty"}
+              "restart_seconds", "idle_duty", "shared_duty"}
     if not isinstance(settings, dict) or set(settings) != fields:
         raise ValueError("config must contain exactly: " + ", ".join(sorted(fields)))
     if type(settings["uid"]) is not int or settings["uid"] < 0:
         raise ValueError("uid must be a nonnegative integer")
     if not isinstance(settings["gpu_uuid"], str) or not settings["gpu_uuid"].startswith("GPU-"):
         raise ValueError("gpu_uuid must be a full physical GPU UUID (GPU-...)")
-    for name in ("reserve_mib", "startup_seconds", "stable_seconds", "idle_duty", "shared_duty"):
+    for name in ("reserve_mib", "startup_seconds", "stable_seconds", "restart_seconds",
+                 "idle_duty", "shared_duty"):
         value = settings[name]
         if type(value) not in (int, float) or not math.isfinite(value):
             raise ValueError(f"{name} must be a finite number")
@@ -183,8 +204,10 @@ def load_config(path):
         raise ValueError("reserve_mib must be an integer of at least 64 MiB")
     if settings["startup_seconds"] <= 0 or settings["stable_seconds"] <= 0:
         raise ValueError("startup_seconds and stable_seconds must be positive")
-    if not (0 <= settings["idle_duty"] <= 0.8 and 0 <= settings["shared_duty"] <= 0.05):
-        raise ValueError("idle_duty must be 0..0.8; shared_duty must be 0..0.05")
+    if settings["restart_seconds"] <= 0:
+        raise ValueError("restart_seconds must be positive")
+    if not (0 <= settings["idle_duty"] <= 0.8 and 0 <= settings["shared_duty"] <= 0.8):
+        raise ValueError("idle_duty and shared_duty must be 0..0.8")
     return settings
 
 

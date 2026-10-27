@@ -71,6 +71,7 @@ def main():
             config = Path(directory) / "config.yaml"
             config.write_text(f"uid: {uid}\ngpu_uuid: {uuid}\nreserve_mib: {reserve}\n"
                               "startup_seconds: 1\nstable_seconds: 1\n"
+                              "restart_seconds: 300\n"
                               "idle_duty: 0\nshared_duty: 0\n", encoding="utf-8")
             docker("run", "--detach", "--name", name, "--user", "0", "--gpus",
                    f"device={uuid}", "--pid=host", "--network=none", "--cap-drop=ALL",
