@@ -8,7 +8,7 @@
 | SSH 别名 / 公网 IPv4 | `racknerd_188` / `192.255.132.188` |
 | 服务端目录 | `/root/token_usage` |
 | 服务端用户配置 | `/root/token_usage/config/users.json` |
-| 用户接入文件 | `/root/token_usage/config/wty-agent.env`、`wt-agent.env`、`yjs-agent.env`、`zms-agent.env` |
+| 用户接入文件 | `/root/token_usage/config/wty-agent.env`、`wt-agent.env`、`yjs-agent.env`、`zms-agent.env`、`xfy-agent.env` |
 | 服务 / 备份定时器 | `token-usage.service` / `token-usage-backup.timer` |
 | HTTPS / HTTP / loopback | `9443` / `80` / `17320` |
 | Cloudflare 条件 | `(http.host eq "token.wty-yy.top" and ssl)` |
@@ -27,7 +27,7 @@
 | 本机 Node.js | `/home/yy/.nvm/versions/node/v22.22.2/bin/node` |
 | 完整实例操作说明 | 本机及服务器的 `deploy/operations.md` |
 
-当前四个 Hub/token 名称及用户 ID 均为 `wty`、`wt`、`yjs`、`zms`，密钥已于 2026-10-25 重新生成。实际密钥仅从实例配置读取，新增 Hub 时逐个询问名称。本机、`ssh 4090`、`ssh 4090_133`、`ssh hongjun` 的现有采集器均归属 `wty`，设备 ID 和展示名称保留；均已设为每小时上传（`TOKEN_MONITOR_INTERVAL_MS=3600000`、`TOKEN_MONITOR_WATCH=0`）。不要再启动桌面客户端重复上传。
+当前五个 Hub/token 名称及用户 ID 均为 `wty`、`wt`、`yjs`、`zms`、`xfy`。前四位密钥于 2026-10-25 重新生成，`xfy` 于 2026-10-27 新增独立密钥。实际密钥仅从实例配置读取，新增 Hub 时逐个询问名称。本机、`ssh 4090`、`ssh 4090_133`、`ssh hongjun` 的现有采集器均归属 `wty`，设备 ID 和展示名称保留；均已设为每小时上传（`TOKEN_MONITOR_INTERVAL_MS=3600000`、`TOKEN_MONITOR_WATCH=0`）。不要再启动桌面客户端重复上传。
 
 ```bash
 # 服务器状态

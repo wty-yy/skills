@@ -8,10 +8,16 @@
 Examples:
     uv run usage_report.py
     uv run usage_report.py --days 14 --out report.html
+    uv run usage_report.py --accounts ~/.config/opencode-usage/accounts.json
+
+Accounts JSON is a list of {id, name, workspace, apiKeyEnv (optional), profile
+(optional)}. Browser sessions are verified and saved beside that file with
+owner-only permissions; each workspace has its own usage cache.
 """
 
 import argparse
 import calendar
+import hashlib
 import json
 import os
 import random
@@ -65,6 +71,8 @@ GO_TOKEN_PRICES = {
 
 DATA_FLOOR = date(2026, 9, 13)  # first day covered by the Console v2 usage export
 MAX_PERIOD_DAYS = 90
+ACCOUNTS_CONFIG = Path.home() / ".config/opencode-usage/accounts.json"
+REPORT_CACHE = Path(__file__).parent / "account_reports.json"
 
 
 def add_months(day: date, months: int) -> date:
@@ -183,12 +191,24 @@ def load_chartjs() -> str:
         return ""
 
 
-def kv_put(url: str, body: bytes, content_type: str, token: str) -> None:
+def kv_put(url: str, body: bytes, metadata: dict, token: str) -> None:
+    """Publish report HTML and its metadata in one KV write."""
+    boundary = "usage-report-" + hashlib.sha256(body).hexdigest()[:24]
+    multipart = (
+        f'--{boundary}\r\nContent-Disposition: form-data; name="metadata"\r\n\r\n'.encode()
+        + json.dumps(metadata, ensure_ascii=False).encode()
+        + f'\r\n--{boundary}\r\nContent-Disposition: form-data; name="value"; filename="report.html"\r\nContent-Type: text/html; charset=utf-8\r\n\r\n'.encode()
+        + body
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
     request = urllib.request.Request(
         url,
-        data=body,
+        data=multipart,
         method="PUT",
-        headers={"Authorization": f"Bearer {token}", "Content-Type": content_type},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "multipart/form-data; boundary=" + boundary,
+        },
     )
     last_error: Exception | None = None
     for attempt in range(3):
@@ -226,20 +246,14 @@ def push_to_cloudflare(html: str, data: dict) -> None:
     if missing:
         raise RuntimeError("missing env vars for --push: " + ", ".join(missing))
     base = f"{CF_API}/{account}/storage/kv/namespaces/{namespace}/values/{quote(key, safe='')}"
-    kv_put(base, html.encode(), "text/html; charset=utf-8", token)
+    body = html.encode()
     meta = {
         "generatedAt": data["generatedAt"],
-        "range": data["range"],
-        "workspace": data["workspace"],
-        "bytes": len(html),
+        "etag": '"' + hashlib.sha256(body).hexdigest() + '"',
+        "bytes": len(body),
     }
-    kv_put(
-        f"{base}-meta",
-        json.dumps(meta, ensure_ascii=False).encode(),
-        "application/json; charset=utf-8",
-        token,
-    )
-    print(f"pushed: KV '{key}' + '{key}-meta' ({len(html):,} bytes)")
+    kv_put(base, body, meta, token)
+    print(f"pushed: KV '{key}' with metadata ({len(body):,} bytes; 1 write)")
 
 
 def empty_stats() -> dict:
@@ -263,13 +277,10 @@ def load_history(path: Path) -> dict:
         return {}
 
 
-def build_data(args) -> dict:
-    profile = Path(args.profile).expanduser() if args.profile else None
-    headers = ou.auth_header_sets(args.workspace, profile)
-
+def build_account_data(workspace: str, headers: list[dict], days: int | None) -> dict:
     quota = ou.fetch_quota(headers)
     today = datetime.now().astimezone().date()
-    periods, default_period = build_periods(quota, today, args.days)
+    periods, default_period = build_periods(quota, today, days)
     cutoff = date.fromisoformat(periods[-1]["start"])
     last = date.fromisoformat(periods[0]["end"])
     dates = [
@@ -280,15 +291,23 @@ def build_data(args) -> dict:
     daily, _ = ou.aggregate_usage(rows, cutoff, last)
     day_models = aggregate_day_models(rows, cutoff, last)
     key_names = ou.fetch_key_names(headers)
+    cache_path = ou.key_cache_path(workspace)
+    _, keys_fetched_at, keys_days = ou.fetch_key_stats(
+        cutoff, last, headers, cache_path=cache_path
+    )
 
-    history = load_history(Path(__file__).parent / "history.json")
+    history = (
+        load_history(Path(__file__).parent / "history.json")
+        if workspace == ou.DEFAULT_WORKSPACE
+        else {}
+    )
     history_days = {entry["date"]: entry for entry in history.get("days", [])}
     history_span = [min(history_days), max(history_days)] if history_days else None
     history_costs = {
         entry["date"]: round(entry.get("total", {}).get("cost") or 0.0, 6)
         for entry in history.get("days", [])
     }
-    cache_days = ou.load_key_cache().get("days", {})
+    cache_days = ou.load_key_cache(cache_path).get("days", {})
 
     def empty_group() -> dict:
         return {
@@ -412,8 +431,6 @@ def build_data(args) -> dict:
                 }
             )
 
-    _, keys_fetched_at, keys_days = ou.fetch_key_stats(cutoff, last, headers)
-    cache_days = ou.load_key_cache().get("days", {})
     key_days = {
         iso: entry["keys"]
         for iso, entry in cache_days.items()
@@ -434,7 +451,7 @@ def build_data(args) -> dict:
 
     return {
         "generatedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "workspace": args.workspace,
+        "workspace": workspace,
         "range": [dates[0].isoformat(), dates[-1].isoformat()],
         "periods": periods,
         "defaultPeriod": default_period,
@@ -449,6 +466,63 @@ def build_data(args) -> dict:
         "keysDays": keys_days,
         "priceRows": price_rows,
         "quota": quota,
+    }
+
+
+def build_data(args) -> dict:
+    config_path = Path(args.accounts).expanduser()
+    if config_path.exists() and not (args.workspace or args.profile):
+        configs = json.loads(config_path.read_text(encoding="utf-8"))
+    else:
+        workspace = args.workspace or ou.DEFAULT_WORKSPACE
+        configs = [
+            {
+                "id": workspace,
+                "name": "OpenCode",
+                "workspace": workspace,
+                "apiKeyEnv": "OPENCODE_API_KEY",
+                "profile": args.profile,
+            }
+        ]
+    if not isinstance(configs, list) or not configs:
+        raise RuntimeError("accounts config must be a non-empty list")
+    ids = [account["id"] for account in configs]
+    if len(set(ids)) != len(ids):
+        raise RuntimeError("account IDs must be unique")
+
+    cached = load_history(REPORT_CACHE)
+    accounts = []
+    for config in configs:
+        workspace = config["workspace"]
+        try:
+            profile = config.get("profile")
+            headers = ou.auth_header_sets(
+                workspace,
+                Path(profile).expanduser() if profile else None,
+                api_key=os.environ.get(config.get("apiKeyEnv", ""), ""),
+                session_path=config_path.parent / f"session-{workspace}.json",
+            )
+            account = build_account_data(workspace, headers, args.days)
+            cached[workspace] = account
+        except RuntimeError as exc:
+            if workspace not in cached:
+                raise RuntimeError(f"{config['name']}: {exc}") from exc
+            print(f"warning: {config['name']}: {exc}", file=sys.stderr)
+            account = {
+                **cached[workspace],
+                "warning": "读取失败，正在显示上次成功获取的数据；请重新登录该账号。",
+            }
+        accounts.append({**account, "id": config["id"], "name": config["name"]})
+    REPORT_CACHE.write_text(json.dumps(cached, ensure_ascii=False), encoding="utf-8")
+    return {
+        "generatedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "workspace": accounts[0]["workspace"],
+        "range": [
+            min(account["range"][0] for account in accounts),
+            max(account["range"][1] for account in accounts),
+        ],
+        "accounts": accounts,
+        "defaultAccount": accounts[0]["id"],
     }
 
 
@@ -476,7 +550,7 @@ TEMPLATE = """<!DOCTYPE html>
   .refresh-btn.loading .icon { animation:spin .8s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .refresh-btn.loading .icon { animation:none; } }
-  .controls { display:flex; align-items:center; gap:10px; flex:none; }
+  .controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
   .period-select { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:9px; padding:8px 34px 8px 12px; font-size:13px; cursor:pointer; max-width:360px; text-overflow:ellipsis; }
   .period-select:hover { border-color:var(--muted); }
   @media (max-width:980px) { header { flex-wrap:wrap; } .controls { flex-wrap:wrap; } }
@@ -527,9 +601,11 @@ try {
     <div>
       <h1>OpenCode 用量报告</h1>
       <div class="meta" id="meta"></div>
+      <div class="footnote" id="accountWarning" role="status" hidden></div>
     </div>
     <div class="controls">
-      <select id="periodSelect" class="period-select" title="切换查看的套餐周期"></select>
+      <select id="accountSelect" class="period-select" aria-label="账号" title="切换账号"></select>
+      <select id="periodSelect" class="period-select" aria-label="套餐周期" title="切换查看的套餐周期"></select>
       <button id="refreshBtn" class="refresh-btn" type="button" title="获取最新发布的报告（每 10 分钟自动发布一次）">
         <span class="icon" aria-hidden="true">↻</span><span id="refreshLabel">刷新</span>
       </button>
@@ -576,7 +652,11 @@ try {
 <script type="application/json" id="reportData">__DATA__</script>
 <script>__CHARTJS__</script>
 <script>
-let DATA = JSON.parse(document.getElementById("reportData").textContent);
+let REPORT = JSON.parse(document.getElementById("reportData").textContent);
+let savedAccount;
+try { savedAccount = localStorage.getItem("oc-account"); } catch (e) {}
+let DATA = REPORT.accounts.find(a => a.id === savedAccount) ||
+  REPORT.accounts.find(a => a.id === REPORT.defaultAccount) || REPORT.accounts[0];
 const CHARTJS_FALLBACK = "https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js";
 
 const fmtInt = v => (v || 0).toLocaleString("en-US");
@@ -595,7 +675,7 @@ const normKeyName = name => {
   return plain.includes(" - ") ? plain.split(" - ").pop() : plain;
 };
 
-const state = { period: DATA.defaultPeriod };
+const state = { account: DATA.id, period: DATA.defaultPeriod, periods: {} };
 const currentPeriod = () =>
   DATA.periods.find(p => p.key === state.period) || DATA.periods[0];
 const periodDays = () => {
@@ -714,9 +794,37 @@ function renderMeta() {
     ? "套餐周期 " + q.startsAt.slice(0, 10) + " ~ " + q.endsAt.slice(0, 10)
     : "套餐周期未知";
   document.getElementById("meta").textContent =
-    plan + " · 生成于 " + DATA.generatedAt.replace("T", " ").slice(0, 19);
+    DATA.name + " · " + plan + " · 生成于 " + DATA.generatedAt.replace("T", " ").slice(0, 19);
+  const warning = document.getElementById("accountWarning");
+  warning.textContent = DATA.warning || "";
+  warning.hidden = !DATA.warning;
   document.getElementById("footer").textContent =
     "数据来源：OpenCode Console v2 用量导出（天 × 模型）；按密钥明细来自请求日志（保留 30 天，9/22 起有记录）。报告每 10 分钟自动发布，点击右上角「刷新」即可载入最新数据。";
+}
+
+function renderAccountSelect() {
+  const select = document.getElementById("accountSelect");
+  select.replaceChildren(...REPORT.accounts.map(account => {
+    const option = document.createElement("option");
+    option.value = account.id;
+    option.textContent = account.name + (account.warning ? "（历史快照）" : "");
+    option.selected = account.id === state.account;
+    return option;
+  }));
+  select.hidden = REPORT.accounts.length < 2;
+}
+
+function selectAccount(id) {
+  state.periods[state.account] = state.period;
+  DATA = REPORT.accounts.find(account => account.id === id) || REPORT.accounts[0];
+  state.account = DATA.id;
+  const previousPeriod = state.periods[DATA.id];
+  state.period = DATA.periods.some(period => period.key === previousPeriod)
+    ? previousPeriod : DATA.defaultPeriod;
+  try { localStorage.setItem("oc-account", DATA.id); } catch (e) {}
+  renderAccountSelect();
+  renderPeriodSelect();
+  renderAll();
 }
 
 function renderPeriodSelect() {
@@ -780,6 +888,9 @@ function renderCards() {
 function renderQuota() {
   const box = document.getElementById("quota");
   const note = document.getElementById("quotaNote");
+  const badge = document.getElementById("quotaBadge");
+  badge.textContent = DATA.warning ? "历史快照" : "实时";
+  badge.classList.toggle("live", !DATA.warning);
   box.innerHTML = "";
   if (DATA.quota.error) { box.append(el("div", "card", DATA.quota.error)); return; }
   if (!DATA.quota.subscribed) {
@@ -1013,19 +1124,13 @@ function parseReportData(html) {
 }
 
 function applyReportData(next) {
-  if (!next || !Array.isArray(next.periods) || !next.periods.length ||
-      !Array.isArray(next.days) || !next.dayModels || !next.keyDays || !next.quota) {
+  if (!next || !Array.isArray(next.accounts) || !next.accounts.length ||
+      next.accounts.some(account => !Array.isArray(account.periods) || !account.periods.length ||
+        !Array.isArray(account.days) || !account.dayModels || !account.keyDays || !account.quota)) {
     throw new Error("报告数据格式不完整");
   }
-  const previousPeriod = state.period;
-  DATA = next;
-  if (!DATA.periods.some(p => p.key === previousPeriod)) {
-    state.period = DATA.periods.some(p => p.key === DATA.defaultPeriod)
-      ? DATA.defaultPeriod
-      : DATA.periods[0].key;
-  }
-  renderPeriodSelect();
-  renderAll();
+  REPORT = next;
+  selectAccount(state.account);
 }
 
 async function refreshReport() {
@@ -1049,7 +1154,7 @@ async function refreshReport() {
     });
     if (!response.ok) throw new Error("HTTP " + response.status);
     const next = parseReportData(await response.text());
-    if (next.generatedAt === DATA.generatedAt) {
+    if (next.generatedAt === REPORT.generatedAt) {
       setRefreshState("已是最新", { success: true });
     } else {
       applyReportData(next);
@@ -1068,6 +1173,9 @@ async function refreshReport() {
 }
 
 document.getElementById("refreshBtn").addEventListener("click", refreshReport);
+document.getElementById("accountSelect").addEventListener("change", event => {
+  selectAccount(event.target.value);
+});
 document.getElementById("themeToggle").addEventListener("click", () => {
   applyTheme(currentTheme() === "light" ? "dark" : "light");
 });
@@ -1076,6 +1184,7 @@ document.getElementById("periodSelect").addEventListener("change", event => {
   renderAll();
 });
 document.getElementById("themeToggle").textContent = currentTheme() === "light" ? "深色模式" : "浅色模式";
+renderAccountSelect();
 renderPeriodSelect();
 renderAll();
 setInterval(tick, 30000);
@@ -1092,8 +1201,13 @@ def main() -> None:
         type=int,
         help="number of days (default: current OpenCode Go billing period up to today)",
     )
-    parser.add_argument("--workspace", default=ou.DEFAULT_WORKSPACE)
+    parser.add_argument(
+        "--workspace", help="query a single workspace instead of accounts"
+    )
     parser.add_argument("--profile", help="Chrome profile dir name, e.g. Default")
+    parser.add_argument(
+        "--accounts", default=str(ACCOUNTS_CONFIG), help="path to accounts JSON config"
+    )
     parser.add_argument(
         "--max-pages", type=int, default=200, help="usage.list page cap"
     )

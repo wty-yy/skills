@@ -109,18 +109,37 @@ def load_cookies(secret: bytes, profile: Path | None = None) -> dict[str, str]:
 
 
 def auth_header_sets(
-    workspace: str, profile: Path | None = None
+    workspace: str,
+    profile: Path | None = None,
+    *,
+    api_key: str | None = None,
+    session_path: Path | None = None,
 ) -> list[dict[str, str]]:
     sets: list[dict[str, str]] = []
-    key = os.environ.get("OPENCODE_API_KEY", "")
+    key = os.environ.get("OPENCODE_API_KEY", "") if api_key is None else api_key
     if key:
         sets.append({"Authorization": f"Bearer {key}"})
     try:
         cookies = load_cookies(get_keyring_secret(), profile)
         cookie = "; ".join(f"{name}={value}" for name, value in cookies.items())
-        sets.append({"Cookie": cookie, "x-org-id": workspace})
+        headers = {"Cookie": cookie, "x-org-id": workspace}
+        if session_path:
+            # Only retain a browser session after verifying access to this org.
+            call_api("/go/status", header_sets=[headers])
+            session_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            with os.fdopen(
+                os.open(session_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600),
+                "w",
+            ) as stream:
+                json.dump({"cookie": cookie}, stream)
+        sets.append(headers)
     except RuntimeError:
         pass
+    if session_path and session_path.exists():
+        saved = json.loads(session_path.read_text(encoding="utf-8"))
+        headers = {"Cookie": saved["cookie"], "x-org-id": workspace}
+        if headers not in sets:
+            sets.append(headers)
     if not sets:
         raise RuntimeError("no OPENCODE_API_KEY and no Chrome console session")
     return sets
@@ -280,15 +299,23 @@ def aggregate_usage(rows: list[dict], cutoff: date, today: date) -> tuple[dict, 
     return daily, models
 
 
-def load_key_cache() -> dict:
+def key_cache_path(workspace: str) -> Path:
+    return (
+        KEY_CACHE
+        if workspace == DEFAULT_WORKSPACE
+        else KEY_CACHE.with_name(f"key_cache-{workspace}.json")
+    )
+
+
+def load_key_cache(cache_path: Path = KEY_CACHE) -> dict:
     try:
-        return json.loads(KEY_CACHE.read_text(encoding="utf-8"))
+        return json.loads(cache_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {"days": {}}
 
 
-def save_key_cache(cache: dict) -> None:
-    KEY_CACHE.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+def save_key_cache(cache: dict, cache_path: Path = KEY_CACHE) -> None:
+    cache_path.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
 
 
 def fetch_day_keys(day: str, header_sets: list[dict]) -> dict[str, dict]:
@@ -314,15 +341,20 @@ def fetch_day_keys(day: str, header_sets: list[dict]) -> dict[str, dict]:
 
 
 def fetch_key_stats(
-    cutoff: date, today: date, header_sets: list[dict], budget: int = KEY_FETCH_BUDGET
-) -> tuple[dict, str | None]:
+    cutoff: date,
+    today: date,
+    header_sets: list[dict],
+    budget: int = KEY_FETCH_BUDGET,
+    *,
+    cache_path: Path = KEY_CACHE,
+) -> tuple[dict, str | None, int]:
     """Aggregate per-key stats over the window, backfilling at most `budget` days.
 
     Days already present in key_cache.json are never re-downloaded (today is
     always refreshed), and the cache keeps KEY_CACHE_MAX_AGE days regardless of
     the report window so switching periods does not re-fetch history.
     """
-    cache = load_key_cache()
+    cache = load_key_cache(cache_path)
     days_cache = cache.setdefault("days", {})
     days = [
         date.fromordinal(o) for o in range(cutoff.toordinal(), today.toordinal() + 1)
@@ -348,7 +380,7 @@ def fetch_key_stats(
     for iso in list(days_cache):
         if iso < (today - timedelta(days=KEY_CACHE_MAX_AGE)).isoformat():
             del days_cache[iso]
-    save_key_cache(cache)
+    save_key_cache(cache, cache_path)
 
     key_stats: dict[str, dict] = {}
     fetched_at: str | None = None
@@ -424,7 +456,9 @@ def build_summary(args) -> dict:
         for model, stats in sorted(model_stats.items(), key=lambda kv: -kv[1]["cost"])
     ]
 
-    key_stats, keys_fetched_at, _keys_days = fetch_key_stats(cutoff, today, header_sets)
+    key_stats, keys_fetched_at, _keys_days = fetch_key_stats(
+        cutoff, today, header_sets, cache_path=key_cache_path(args.workspace)
+    )
     key_names = fetch_key_names(header_sets)
     keys = []
     for key_id, stats in key_stats.items():

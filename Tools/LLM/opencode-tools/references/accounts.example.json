@@ -1,0 +1,13 @@
+[
+  {
+    "id": "github",
+    "name": "GitHub",
+    "workspace": "org_replace_with_github_workspace"
+  },
+  {
+    "id": "google",
+    "name": "Google",
+    "workspace": "wrk_replace_with_google_workspace",
+    "apiKeyEnv": "OPENCODE_API_KEY"
+  }
+]

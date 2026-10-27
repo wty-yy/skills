@@ -1,5 +1,8 @@
 __pycache__/
 *.pyc
-key_cache.json
+key_cache*.json
+account_reports.json
+accounts.json
+session-*.json
 history.json
 usage_report.html
