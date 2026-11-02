@@ -40,7 +40,13 @@ COST_SCALE = 1e8
 CHROME_ROOT = Path(
     os.environ.get("CHROME_CONFIG_DIR", "~/.config/google-chrome")
 ).expanduser()
-TOKEN_FIELDS = ("inputTokens", "outputTokens", "reasoningTokens", "cacheReadTokens")
+TOKEN_FIELDS = (
+    "inputTokens",
+    "outputTokens",
+    "reasoningTokens",
+    "cacheReadTokens",
+    "cacheWriteTokens",
+)
 KEY_CACHE = Path(__file__).parent / "key_cache.json"
 KEY_FETCH_BUDGET = 4
 KEY_CACHE_MAX_AGE = 365
@@ -276,7 +282,9 @@ def empty_stats() -> dict:
 
 
 def total_tokens(stats: dict) -> int:
-    return sum(stats.get(field) or 0 for field in TOKEN_FIELDS)
+    return sum(
+        stats.get(field) or 0 for field in TOKEN_FIELDS if field != "reasoningTokens"
+    )
 
 
 def aggregate_usage(rows: list[dict], cutoff: date, today: date) -> tuple[dict, dict]:
@@ -295,6 +303,9 @@ def aggregate_usage(rows: list[dict], cutoff: date, today: date) -> tuple[dict, 
             stats["inputTokens"] += int(row["input_tokens"] or 0)
             stats["outputTokens"] += int(row["output_tokens"] or 0)
             stats["cacheReadTokens"] += int(row["cache_read_tokens"] or 0)
+            stats["cacheWriteTokens"] += int(
+                row.get("cache_write_5m_tokens") or 0
+            ) + int(row.get("cache_write_1h_tokens") or 0)
             stats["cost"] += cost
     return daily, models
 
@@ -321,7 +332,7 @@ def save_key_cache(cache: dict, cache_path: Path = KEY_CACHE) -> None:
 def fetch_day_keys(day: str, header_sets: list[dict]) -> dict[str, dict]:
     cursor: str | None = None
     stats: dict[str, dict] = {}
-    for _ in range(50):
+    while True:
         params: dict = {"day": day, "category": "inference", "limit": PAGE_SIZE}
         if cursor:
             params["cursor"] = cursor
@@ -340,6 +351,19 @@ def fetch_day_keys(day: str, header_sets: list[dict]) -> dict[str, dict]:
     return stats
 
 
+def key_day_complete(day: str, entry: dict, requests: int | None = None) -> bool:
+    fetched_at = datetime.fromisoformat(entry["fetchedAt"])
+    day_end = datetime.fromisoformat(day).replace(tzinfo=timezone.utc) + timedelta(
+        days=1
+    )
+    count = sum(stats.get("requests", 0) for stats in entry.get("keys", {}).values())
+    return fetched_at >= day_end and (
+        requests is None
+        or entry.get("expectedRequests") == requests
+        or count >= requests
+    )
+
+
 def fetch_key_stats(
     cutoff: date,
     today: date,
@@ -347,12 +371,12 @@ def fetch_key_stats(
     budget: int = KEY_FETCH_BUDGET,
     *,
     cache_path: Path = KEY_CACHE,
+    daily_requests: dict[str, int] | None = None,
 ) -> tuple[dict, str | None, int]:
     """Aggregate per-key stats over the window, backfilling at most `budget` days.
 
-    Days already present in key_cache.json are never re-downloaded (today is
-    always refreshed), and the cache keeps KEY_CACHE_MAX_AGE days regardless of
-    the report window so switching periods does not re-fetch history.
+    Finalize days after UTC midnight and repair incomplete cached days within
+    log retention. Keep older entries for KEY_CACHE_MAX_AGE days.
     """
     cache = load_key_cache(cache_path)
     days_cache = cache.setdefault("days", {})
@@ -360,22 +384,33 @@ def fetch_key_stats(
         date.fromordinal(o) for o in range(cutoff.toordinal(), today.toordinal() + 1)
     ]
     fetched = 0
+    utc_today = datetime.now(timezone.utc).date()
+    cache.pop("lastError", None)
     for day in reversed(days):
         iso = day.isoformat()
-        is_today = iso == today.isoformat()
+        if day > utc_today or day < utc_today - timedelta(days=29):
+            continue
         entry = days_cache.get(iso)
-        if entry and not is_today:
+        expected = daily_requests.get(iso, 0) if daily_requests is not None else None
+        if entry and key_day_complete(iso, entry, expected):
             continue
         if fetched >= budget:
             break
         try:
             stats = fetch_day_keys(iso, header_sets)
-        except RuntimeError:
+        except RuntimeError as exc:
+            cache["lastError"] = (
+                "auth"
+                if "HTTP 401" in str(exc) or "HTTP 403" in str(exc)
+                else "request"
+            )
             break
         days_cache[iso] = {
             "fetchedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
             "keys": stats,
+            "expectedRequests": expected,
         }
+        save_key_cache(cache, cache_path)
         fetched += 1
     for iso in list(days_cache):
         if iso < (today - timedelta(days=KEY_CACHE_MAX_AGE)).isoformat():
@@ -457,7 +492,11 @@ def build_summary(args) -> dict:
     ]
 
     key_stats, keys_fetched_at, _keys_days = fetch_key_stats(
-        cutoff, today, header_sets, cache_path=key_cache_path(args.workspace)
+        cutoff,
+        today,
+        header_sets,
+        cache_path=key_cache_path(args.workspace),
+        daily_requests={day: stats["requests"] for day, stats in daily.items()},
     )
     key_names = fetch_key_names(header_sets)
     keys = []

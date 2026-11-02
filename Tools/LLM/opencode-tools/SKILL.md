@@ -41,6 +41,7 @@ Copy [references/accounts.example.json](references/accounts.example.json) to `~/
 
 - `apiKeyEnv` names that account's service-key environment variable; when omitted, the account uses its Chrome or saved session without inheriting another account's key. Load those variables into the process, for example with `uv run --env-file ~/.config/opencode-usage/env usage_report.py`.
 - Optional `profile` is an absolute or `~`-expanded Chrome profile directory. `--workspace` or `--profile` selects single-workspace mode instead of loading the accounts list. The terminal script remains a single-workspace command.
+- Use separate Chrome profiles for accounts that need ongoing per-key updates. Bind each profile with its account's `profile` field; logging out and switching accounts within one profile can invalidate the previous saved session.
 - The browser session is checked against `/go/status` for the target workspace before saving it as `session-<workspace>.json` beside the accounts config (mode 600). A saved session lets the other account remain readable after switching the browser login, until that session expires.
 - Usage caches are separate: the original `DEFAULT_WORKSPACE` retains `key_cache.json` and optional `history.json`; other workspaces use `key_cache-<workspace>.json` and do not inherit that history. `account_reports.json` keeps the last successful snapshot per workspace; read failures show its original timestamp and a history-snapshot warning. An account without any successful snapshot fails generation instead of publishing incomplete data.
 - Existing service keys keep totals and Go quota available while that account is logged out. Per-key request logs still need a valid session for the same account; otherwise its existing key cache is retained.
@@ -60,14 +61,16 @@ Base `https://opencode.ai/console/api`. The workspace ID is the org ID.
 
 | Endpoint | Purpose |
 | --- | --- |
-| `/v2/usage/export?range=7d\|30d\|90d` | CSV at day × model × user: `requests`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cost_micro_cents`; covers 2026-09-13 onward and matches request-log sums exactly |
+| `/v2/usage/export?range=7d\|30d\|90d` | Official CSV at UTC day × model × user: `requests`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_5m_tokens`, `cache_write_1h_tokens`, `cost_micro_cents`; covers 2026-09-13 onward |
 | `/request-logs?day=YYYY-MM-DD&category=inference&limit=100` | per-request rows with `serviceAPIKeyID`, token counts, dollar `cost`; cursor pagination (`nextCursor` must be URL-encoded), 30-day retention, data from 2026-09-22 |
 | `/service-accounts` | service accounts and their keys (`id -> name`) |
 | `/go/status` | Go quota meters: `access.meters.{fiveHour,week,month}`; the month window resets at `access.endsAt` (subscription period end); also returns `startsAt`, `endsAt`, `cancelAtPeriodEnd`, `resumability` |
 | `POST /go/subscription/cancel` | stop Go auto-renewal; sets `cancelAtPeriodEnd=true`, access remains until `access.endsAt` |
 | `POST /go/subscription/resume` | undo cancellation and restore renewal |
 
-- The request-log backend is slow (5-30 s per page) and intermittently returns 500; `/request-logs/export` and `/request-logs/groups` are currently broken. `fetch_key_stats()` therefore caches one day at a time in the workspace's key cache, backfills at most `KEY_FETCH_BUDGET` days per account per run, and always re-fetches today.
+- The request-log backend is slow (5-30 s per page) and intermittently returns 500; `/request-logs/export` and `/request-logs/groups` are currently broken. `fetch_key_stats()` caches one day at a time, saves progress after each day, and backfills at most `KEY_FETCH_BUDGET` days per account per normal run. Follow pagination until `nextCursor` ends; a 50-page cap silently loses requests on busy days.
+- A day is finalized after UTC midnight, rather than local midnight. Within the 30-day retention window, repair unfinished days and caches that predate the official export's request count. Store `expectedRequests` after a full scan so stable backend gaps do not consume the backfill budget indefinitely. Preserve older cached data instead of replacing it with expired, empty logs.
+- Logs include failed requests and may also lack records present in the official export. Show those differences explicitly instead of assigning missing usage to a guessed key. `reasoningTokens` is already included in `outputTokens`; total tokens are input + output + cache read + cache write, without adding reasoning again.
 - The report shows per-day `wt` / `yy` totals: 2026-09-22+ from the key cache, 2026-09-13..09-21 from the optional `history.json` next to the scripts (recovered from cached old reports). Splits are scaled proportionally so `wt + yy` equals the official daily total; days without either source fall back to `—` in the split columns.
 - `/usage/rows` was removed in the 2026-09-27 redeploy; per-key data comes only from request logs.
 - `cost_micro_cents`, request-log `cost` (USD float) and quota `usedMicroCents`/`limitMicroCents` are in 1e-8 USD.
@@ -83,6 +86,7 @@ Base `https://opencode.ai/console/api`. The workspace ID is the org ID.
 - Default view is the selected account's current Go period (`startsAt` → today). Its period selector also offers previous monthly periods back to 2026-09-13, capped at 90 days. Quota always describes that account's current plan, including when viewing a historical period.
 - The `刷新` button re-fetches the published URL with a `_refresh` cache-buster and `cache: "no-store"`, parses the embedded `<script type="application/json" id="reportData">` snapshot, replaces `REPORT` and selects the matching account's `DATA`. The selected account, period, theme and scroll position survive; opening via `file://` falls back to `location.reload()`.
 - The snapshot contains `accounts`, `defaultAccount` and a publication `generatedAt`; each account has its own `generatedAt`, `periods`, `days`, `dayModels`, `keyDays`, `keysMeta` and `quota`.
+- `keyDayStatus` records per-day cache timestamps, request counts and completion; `keysError` reports request-log auth or fetch failures independently of live totals/quota. The key table includes cache writes and labels request counts as including failures. Its status and coverage use the selected period and show unmatched tokens/cost when logs do not cover the official export.
 - Header meta is intentionally short: `<account name> · 套餐周期 <startsAt> ~ <endsAt> · 生成于 <timestamp>`. Failed accounts show a warning and mark quota as a historical snapshot.
 - The period selector reserves space for its date range and becomes full-width on small screens; keep that behavior when changing the header layout.
 - The report contains personal usage data. Keep generated HTML, `key_cache*.json`, `history.json` and `account_reports.json` outside version control; keep real account configs and saved sessions in the private config directory.
@@ -108,10 +112,11 @@ The timer runs every 10 minutes with `TimeoutStartSec=600` to cover slow request
 cd <skill>
 uvx ruff check --target-version py310 scripts/opencode_usage.py scripts/usage_report.py
 uvx ruff format --check scripts/opencode_usage.py scripts/usage_report.py
+uv run scripts/test_opencode_usage.py
 node --test references/cloudflare-worker.test.mjs
 ```
 
-When modifying publication code, mock `urllib.request.urlopen` and check that one successful publication sends exactly one multipart PUT containing both the HTML and metadata, including UTF-8 byte length and SHA-256 ETag. The Worker tests cover memory-cache reuse/expiry, isolation by KV binding, conditional GET, HEAD, and unavailable KV. For account changes, verify separate caches and histories, snapshot fallback, and account/period selection across refreshes.
+When modifying publication code, mock `urllib.request.urlopen` and check that one successful publication sends exactly one multipart PUT containing both the HTML and metadata, including UTF-8 byte length and SHA-256 ETag. Python regressions cover token accounting, pagination beyond 50 pages, UTC finalization, cache repair, auth failure and expired-log preservation. The Worker tests cover memory-cache reuse/expiry, isolation by KV binding, conditional GET, HEAD, and unavailable KV. For account changes, verify separate caches and histories, snapshot fallback, and account/period selection across refreshes.
 
 ## Troubleshooting
 

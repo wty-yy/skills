@@ -33,7 +33,7 @@ import opencode_usage as ou
 
 CHARTJS_URL = "https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
 CF_API = "https://api.cloudflare.com/client/v4/accounts"
-TOKEN_FIELDS = ("inputTokens", "outputTokens", "cacheReadTokens")
+TOKEN_FIELDS = ("inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens")
 GO_TOKEN_PRICES = {
     "deepseek-v4.1-flash": [("闲时", 0.15, 0.60, 0.003), ("峰时", 0.30, 1.20, 0.006)],
     "deepseek-v4-pro": [("闲时", 0.66, 1.98, 0.022), ("峰时", 1.32, 3.96, 0.044)],
@@ -173,8 +173,14 @@ def aggregate_day_models(rows: list[dict], start: date, end: date) -> dict:
         )
         stats["requests"] += int(row["requests"] or 0)
         stats["tokens"] += sum(
-            int(row[field] or 0)
-            for field in ("input_tokens", "output_tokens", "cache_read_tokens")
+            int(row.get(field) or 0)
+            for field in (
+                "input_tokens",
+                "output_tokens",
+                "cache_read_tokens",
+                "cache_write_5m_tokens",
+                "cache_write_1h_tokens",
+            )
         )
         stats["cost"] = round(stats["cost"] + cost, 6)
     return out
@@ -261,7 +267,7 @@ def empty_stats() -> dict:
 
 
 def total_tokens(stats: dict) -> int:
-    return sum(stats.get(field) or 0 for field in TOKEN_FIELDS)
+    return ou.total_tokens(stats)
 
 
 def normalize_key_name(name: str) -> str:
@@ -293,7 +299,11 @@ def build_account_data(workspace: str, headers: list[dict], days: int | None) ->
     key_names = ou.fetch_key_names(headers)
     cache_path = ou.key_cache_path(workspace)
     _, keys_fetched_at, keys_days = ou.fetch_key_stats(
-        cutoff, last, headers, cache_path=cache_path
+        cutoff,
+        last,
+        headers,
+        cache_path=cache_path,
+        daily_requests={day: stats["requests"] for day, stats in daily.items()},
     )
 
     history = (
@@ -307,7 +317,8 @@ def build_account_data(workspace: str, headers: list[dict], days: int | None) ->
         entry["date"]: round(entry.get("total", {}).get("cost") or 0.0, 6)
         for entry in history.get("days", [])
     }
-    cache_days = ou.load_key_cache(cache_path).get("days", {})
+    key_cache = ou.load_key_cache(cache_path)
+    cache_days = key_cache.get("days", {})
 
     def empty_group() -> dict:
         return {
@@ -316,6 +327,7 @@ def build_account_data(workspace: str, headers: list[dict], days: int | None) ->
             "outputTokens": 0,
             "reasoningTokens": 0,
             "cacheReadTokens": 0,
+            "cacheWriteTokens": 0,
             "tokens": 0,
             "cost": 0.0,
         }
@@ -333,14 +345,10 @@ def build_account_data(workspace: str, headers: list[dict], days: int | None) ->
                     "outputTokens",
                     "reasoningTokens",
                     "cacheReadTokens",
+                    "cacheWriteTokens",
                 ):
                     bucket[field] += stats.get(field) or 0
-                bucket["tokens"] = (
-                    bucket["inputTokens"]
-                    + bucket["outputTokens"]
-                    + bucket["reasoningTokens"]
-                    + bucket["cacheReadTokens"]
-                )
+                bucket["tokens"] = total_tokens(bucket)
                 bucket["cost"] += stats.get("cost") or 0.0
             if groups:
                 return {
@@ -464,6 +472,20 @@ def build_account_data(workspace: str, headers: list[dict], days: int | None) ->
         "historySpan": history_span,
         "keysFetchedAt": keys_fetched_at,
         "keysDays": keys_days,
+        "keyDayStatus": {
+            iso: {
+                "fetchedAt": entry["fetchedAt"],
+                "requests": sum(
+                    stats.get("requests", 0) for stats in entry.get("keys", {}).values()
+                ),
+                "complete": ou.key_day_complete(
+                    iso, entry, daily.get(iso, {}).get("requests", 0)
+                ),
+            }
+            for iso, entry in cache_days.items()
+            if cutoff.isoformat() <= iso <= last.isoformat()
+        },
+        "keysError": key_cache.get("lastError"),
         "priceRows": price_rows,
         "quota": quota,
     }
@@ -633,7 +655,7 @@ try {
   </section>
 
   <section class="panel">
-    <h2>按 API 密钥</h2>
+    <h2>按 API 密钥<span class="badge" id="keysBadge"></span></h2>
     <table id="keyTable"></table>
     <div class="footnote" id="keyNote">按密钥数据来自请求日志（保留 30 天），按天缓存、增量刷新。</div>
   </section>
@@ -684,10 +706,10 @@ const periodDays = () => {
 };
 const emptyTotals = () => ({
   requests: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0,
-  cacheReadTokens: 0, tokens: 0, cost: 0,
+  cacheReadTokens: 0, cacheWriteTokens: 0, tokens: 0, cost: 0,
 });
 const sumDays = days => days.reduce((acc, d) => {
-  for (const field of ["requests", "inputTokens", "outputTokens", "reasoningTokens", "cacheReadTokens", "tokens", "cost"]) {
+  for (const field of ["requests", "inputTokens", "outputTokens", "reasoningTokens", "cacheReadTokens", "cacheWriteTokens", "tokens", "cost"]) {
     acc[field] += d[field] || 0;
   }
   return acc;
@@ -731,8 +753,8 @@ function keyRows(days) {
     const entry = DATA.keyDays[d.date];
     if (!entry) continue;
     for (const [id, s] of Object.entries(entry)) {
-      const row = rows[id] || (rows[id] = { id, requests: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheReadTokens: 0, cost: 0 });
-      for (const field of ["requests", "inputTokens", "outputTokens", "reasoningTokens", "cacheReadTokens", "cost"]) {
+      const row = rows[id] || (rows[id] = { id, requests: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0 });
+      for (const field of ["requests", "inputTokens", "outputTokens", "reasoningTokens", "cacheReadTokens", "cacheWriteTokens", "cost"]) {
         row[field] += s[field] || 0;
       }
     }
@@ -747,7 +769,7 @@ function keyRows(days) {
   return Object.values(rows).map(row => {
     const meta = DATA.keysMeta[row.id] || { name: row.id, group: "yy" };
     const cost = row.cost + (DATA.historyKeyCosts[normKeyName(meta.name)] || 0) * legacyFactor;
-    return { ...row, name: meta.name, group: meta.group, tokens: row.inputTokens + row.outputTokens + row.reasoningTokens + row.cacheReadTokens, cost };
+    return { ...row, name: meta.name, group: meta.group, tokens: row.inputTokens + row.outputTokens + row.cacheReadTokens + row.cacheWriteTokens, cost };
   }).sort((a, b) => b.cost - a.cost || a.name.localeCompare(b.name));
 }
 
@@ -1031,9 +1053,36 @@ function renderTables() {
     ]]));
 
   const keys = keyRows(days);
+  const keyStatus = DATA.keyDayStatus || {};
+  const activeDays = days.filter(day => day.requests);
+  const coveredDays = activeDays.filter(day => DATA.keyDays[day.date]).length;
+  const pendingDays = activeDays.filter(day => !keyStatus[day.date] || (!keyStatus[day.date].complete && keyStatus[day.date].requests < day.requests)).length;
+  const gapDays = activeDays.filter(day => keyStatus[day.date] && keyStatus[day.date].complete && keyStatus[day.date].requests < day.requests).length;
+  const unfinishedDays = activeDays.filter(day => keyStatus[day.date] && !keyStatus[day.date].complete).length;
+  const unfinishedHistory = activeDays.some(day => day.date < new Date().toISOString().slice(0, 10) && keyStatus[day.date] && !keyStatus[day.date].complete);
+  const badge = document.getElementById("keysBadge");
+  const note = document.getElementById("keyNote");
+  badge.textContent = DATA.warning ? "历史快照" : DATA.keysError === "auth" ? "需重新登录" : DATA.keysError ? "更新失败" : pendingDays || unfinishedHistory ? "部分明细待补齐" : gapDays ? "日志存在缺口" : unfinishedDays ? "当日更新中" : "已更新";
+  badge.classList.toggle("live", !DATA.warning && !DATA.keysError && !pendingDays && !gapDays && !unfinishedDays);
+  const timestamps = activeDays.map(day => keyStatus[day.date] && keyStatus[day.date].fetchedAt).filter(Boolean).sort();
+  const stampLabel = value => value.replace("T", " ").slice(0, 19);
+  const cacheNote = timestamps.length
+    ? "缓存时间 " + stampLabel(timestamps[0]) + (timestamps.at(-1) !== timestamps[0] ? " ~ " + stampLabel(timestamps.at(-1)) : "") + "。"
+    : "";
+  const errorNote = DATA.keysError === "auth"
+    ? "当前账号的日志登录会话已失效，显示已有缓存；请在该账号的独立 Chrome 配置文件中重新登录。"
+    : DATA.keysError ? "请求日志更新失败，显示已有缓存。" : "";
+  const unmatchedTokens = Math.max(0, totals.tokens - keys.reduce((sum, key) => sum + key.tokens, 0));
+  const unmatchedCost = Math.max(0, totals.cost - keys.reduce((sum, key) => sum + key.cost, 0));
+  note.textContent = errorNote + "按密钥明细来自请求日志（保留 30 天，按 UTC 分日，请求数含失败请求）；本周期覆盖 " + coveredDays + "/" + activeDays.length + " 个有用量的日期" +
+    (pendingDays ? "，其中 " + pendingDays + " 天不完整或缺失" : "") + "。" + cacheNote +
+    (gapDays ? "已读完的历史日志中有 " + gapDays + " 天仍少于官方导出，缺口无法归属到具体密钥。" : "") +
+    (unmatchedTokens || unmatchedCost > 0.000001 ? "尚未匹配到密钥日志的用量：" + fmtTokens(unmatchedTokens) + " Token / " + fmtUSD(unmatchedCost) + "。" : "") +
+    (unfinishedDays ? "尚未完成的 UTC 日会继续刷新；保留期内的历史日会自动补齐。" : "") +
+    (Object.keys(DATA.historyCosts || {}).some(day => day >= currentPeriod().start && day <= currentPeriod().end) ? "费用另含早期历史快照按日折算。" : "");
   if (keys.length) {
     table("keyTable",
-      ["密钥", "分组", "请求数", "输入", "输出", "缓存读取", "缓存命中率", "合计 Tokens", "费用(USD)"],
+      ["密钥", "分组", "请求数（含失败）", "输入", "输出", "缓存读取", "缓存写入", "缓存命中率", "合计 Tokens", "费用(USD)"],
       keys.map(k => [
         k.name + '<span class="tag ' + k.group + '">' + k.group + "</span>",
         k.group,
@@ -1041,20 +1090,15 @@ function renderTables() {
         fmtInt(k.inputTokens),
         fmtInt(k.outputTokens),
         fmtInt(k.cacheReadTokens),
+        fmtInt(k.cacheWriteTokens),
         cacheHit(k),
         fmtInt(k.tokens),
         fmtUSD(k.cost),
       ]));
-    if (DATA.keysFetchedAt) {
-      document.getElementById("keyNote").textContent =
-        "按密钥：请求数/Token/缓存命中率来自请求日志（保留 30 天、9/22 起有记录，本周期已缓存 " + DATA.keysDays + " 天），费用另含 9/13~9/21 快照按日折算；缓存时间 " + DATA.keysFetchedAt.replace("T", " ").slice(0, 19) + "。";
-    }
   } else {
-    table("keyTable", ["密钥", "分组", "请求数", "输入", "输出", "缓存读取", "缓存命中率", "合计 Tokens", "费用(USD)"], [
-      ['<span style="color:#8b93a7">该周期暂无按密钥明细（请求日志仅保留 30 天）</span>', "", "", "", "", "", "", "", ""],
+    table("keyTable", ["密钥", "分组", "请求数（含失败）", "输入", "输出", "缓存读取", "缓存写入", "缓存命中率", "合计 Tokens", "费用(USD)"], [
+      ['<span style="color:#8b93a7">该周期暂无按密钥明细（请求日志仅保留 30 天）</span>', "", "", "", "", "", "", "", "", ""],
     ]);
-    document.getElementById("keyNote").textContent =
-      "按密钥明细来自请求日志（保留 30 天、9/22 起有记录），该周期内没有可用的密钥级数据。";
   }
 
   const models = modelRows(days);
