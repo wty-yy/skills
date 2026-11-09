@@ -23,6 +23,7 @@ Categories follow `<category>/<skill>/SKILL.md`; the installers discover them au
 - [data-collection](Tools/data-collection/): deploy a Docker service that reserves GPU memory for one host user.
 - [get-wandb-data-from-chrome-cookie](Tools/Downloader/get-wandb-data-from-chrome-cookie/): download W&B run data.
 - [linux-vnc-remote-control](Tools/linux-vnc-remote-control/): configure SSH and multi-monitor X11 desktop sharing on Debian/Ubuntu with TigerVNC, noVNC, and optional ZeroTier setup guidance.
+- [sshd-ip-config](Tools/sshd-ip-config/): deploy an independent SSH service with a source IP allowlist while preserving the existing SSH endpoint.
 - [wechat-get-data](Tools/Downloader/wechat-get-data/): read local Linux WeChat records and recover emoji.
 - [youtube-download](Tools/Downloader/youtube-download/): download videos, audio, and bilingual subtitles.
 - [yuketang-background](Tools/yuketang-background/): manage Yuketang course tasks.

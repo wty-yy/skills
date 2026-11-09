@@ -1,0 +1,21 @@
+[Unit]
+Description=Independent SSH server for trusted source IP
+Documentation=man:sshd(8) man:sshd_config(5)
+After=network.target
+ConditionPathExists=!/etc/ssh/sshd_not_to_be_run
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/install -d -o root -g root -m 0755 /run/sshd
+ExecStartPre=/usr/sbin/sshd -t -f /etc/ssh/sshd_config_trusted
+ExecStartPre=/usr/sbin/nft -f /etc/ssh/sshd-trusted.nft
+ExecStart=/usr/sbin/sshd -D -e -f /etc/ssh/sshd_config_trusted
+ExecReload=/usr/sbin/sshd -t -f /etc/ssh/sshd_config_trusted
+ExecReload=/usr/sbin/nft -f /etc/ssh/sshd-trusted.nft
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=on-failure
+RestartPreventExitStatus=255
+
+[Install]
+WantedBy=multi-user.target

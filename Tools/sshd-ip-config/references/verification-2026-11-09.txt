@@ -1,0 +1,75 @@
+sshd-trusted deployment verification
+2026-11-09T10:51:17.068101+08:00
+
+$ /usr/sbin/sshd -t -f /etc/ssh/sshd_config_trusted
+(no output)
+exit=0
+
+$ /usr/sbin/nft -c -f /etc/ssh/sshd-trusted.nft
+(no output)
+exit=0
+
+$ systemd-analyze verify /etc/systemd/system/sshd-trusted.service
+(no output)
+exit=0
+
+$ systemctl is-enabled sshd-trusted.service
+enabled
+exit=0
+
+$ systemctl --no-pager show sshd-trusted.service ssh.service ssh.socket -p Id -p ActiveState -p MainPID -p NRestarts
+MainPID=1286388
+NRestarts=0
+Id=sshd-trusted.service
+ActiveState=active
+
+MainPID=4779
+NRestarts=0
+Id=ssh.service
+ActiveState=active
+
+Id=ssh.socket
+ActiveState=active
+exit=0
+
+$ ss -ltnp ( sport = :22 or sport = :2222 )
+State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess
+LISTEN 0      128          0.0.0.0:2222      0.0.0.0:*    users:(("sshd",pid=1286388,fd=3))
+LISTEN 0      4096         0.0.0.0:22        0.0.0.0:*    users:(("sshd",pid=4779,fd=3),("systemd",pid=1,fd=511))
+LISTEN 0      4096            [::]:22           [::]:*    users:(("sshd",pid=4779,fd=4),("systemd",pid=1,fd=512))
+exit=0
+
+$ nft list table inet sshd_trusted
+table inet sshd_trusted {
+	chain input {
+		type filter hook input priority filter - 10; policy accept;
+		tcp dport 2222 ip saddr 115.154.236.42 counter packets 0 bytes 0 accept comment "Trusted SSH source"
+		tcp dport 2222 counter packets 2 bytes 120 drop comment "Block other sources to trusted SSH"
+	}
+}
+exit=0
+
+MATCH /etc/ssh/sshd_config_trusted SHA256=0c107e595bed8465a8d11df2c90c128c0f742304411f76f45e6f30e842823711
+MATCH /etc/ssh/sshd-trusted.nft SHA256=e723da3006fe38998ace85f589a5790d8ddb97457db9ea36606a517264736d1f
+MATCH /etc/systemd/system/sshd-trusted.service SHA256=fe1ee8bc4c9c1d6c3935cfa694013bdf647c4a393d523d6f6f4453044707b4e8
+
+Original SSH baseline:
+{
+  "/etc/ssh/sshd_config": "9d6811963b8f35dec1c67e2b0b9d3f37308a31606c3bd157ac5e55f4de50502b",
+  "/etc/default/ssh": "8ec4e7be86cf6d98c8b280ef6d71e6d97a635813bb06bf5ac5cdc756e98ef379",
+  "ssh_service_mainpid": "4779",
+  "ssh_socket_active": "active"
+}
+
+Completed functional checks:
+PASS: reload preserves exactly two dedicated firewall rules.
+PASS: actual host TCP 2222 connection from 10.184.17.133 is dropped.
+PASS: actual host TCP 22 still returns an SSH banner.
+PASS: isolated real sshd and installed nft rules accept source 115.154.236.42.
+PASS: isolated non-allowlisted IPv4 and IPv6 sources time out.
+PASS: isolated allow and drop counters increased; temporary process and PID file removed.
+PASS: original SSH configuration hashes unchanged; ssh.service MainPID remains 4779; ssh.socket active.
+PASS: pre-existing nftables structures unchanged, excluding packet/byte counters.
+Server reboot was not performed.
+PASS: real client login confirmed at 2026-11-09 11:06: 115.154.236.42:36754 -> 10.184.17.133:2222, user wutianyang, pts/7.
+PASS: authenticated session process ancestry: 1348610 -> 1348564 -> 1286388 (sshd-trusted.service).

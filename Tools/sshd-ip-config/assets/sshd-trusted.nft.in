@@ -1,0 +1,6 @@
+# Only manage this dedicated table. nft loads the batch atomically.
+add table inet sshd_trusted
+flush table inet sshd_trusted
+add chain inet sshd_trusted input { type filter hook input priority -10; policy accept; }
+add rule inet sshd_trusted input tcp dport __TRUSTED_PORT__ ip saddr __TRUSTED_IPV4__ counter accept comment "Trusted SSH source"
+add rule inet sshd_trusted input tcp dport __TRUSTED_PORT__ counter drop comment "Block other sources to trusted SSH"

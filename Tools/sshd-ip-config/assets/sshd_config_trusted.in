@@ -1,0 +1,24 @@
+# Independent SSH endpoint for the trusted source IP.
+Port __TRUSTED_PORT__
+AddressFamily inet
+ListenAddress 0.0.0.0
+PidFile /run/sshd-trusted.pid
+AllowUsers *@__TRUSTED_IPV4__
+
+MaxStartups 10:30:100
+LoginGraceTime 120
+MaxAuthTries 6
+MaxSessions 10
+
+# Authentication and session settings from the recorded Ubuntu deployment.
+# Compare against the target sshd -T output before installing.
+PasswordAuthentication yes
+PubkeyAuthentication yes
+PermitRootLogin prohibit-password
+KbdInteractiveAuthentication no
+UsePAM yes
+X11Forwarding yes
+PrintMotd no
+AcceptEnv LANG LC_*
+Subsystem sftp /usr/lib/openssh/sftp-server
+GatewayPorts clientspecified

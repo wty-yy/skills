@@ -23,6 +23,7 @@
 - [data-collection](Tools/data-collection/)：部署为指定用户预留 GPU 显存的 Docker 服务。
 - [get-wandb-data-from-chrome-cookie](Tools/Downloader/get-wandb-data-from-chrome-cookie/)：下载 W&B 运行数据。
 - [linux-vnc-remote-control](Tools/linux-vnc-remote-control/)：为 Debian/Ubuntu 配置 SSH 和 X11 多屏桌面共享，支持 TigerVNC、noVNC 及可选 ZeroTier 配置引导。
+- [sshd-ip-config](Tools/sshd-ip-config/)：部署带来源 IP 白名单的独立 SSH 服务，保留现有 SSH 入口。
 - [wechat-get-data](Tools/Downloader/wechat-get-data/)：读取 Linux 本地微信记录并恢复表情。
 - [youtube-download](Tools/Downloader/youtube-download/)：下载视频、音频和双语字幕。
 - [yuketang-background](Tools/yuketang-background/)：管理雨课堂课程任务。

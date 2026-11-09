@@ -1,0 +1,4 @@
+interface:
+  display_name: "SSH IP Access"
+  short_description: "Deploy a separate SSH service with an IP allowlist"
+  default_prompt: "使用 $sshd-ip-config 配置独立 SSH 服务和来源 IP 白名单，保留现有 SSH 入口。"
