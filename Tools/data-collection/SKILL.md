@@ -61,7 +61,7 @@ shared_duty: 0.03
 | `shared_duty` | extra load while a target UID does hold one, 0.03 by default. Setting it equal to `idle_duty` keeps the card occupied even during that user's own jobs. |
 | `uid` or `uids`, `gpu_uuid` | written by the deploy script; never edit them by hand in a running deployment. |
 
-The deploy script resolves the usernames and GPU, writes `uids` and `gpu_uuid` into a generated copy at `./.state/<hash>/config.yaml`, validates it, then mounts that file read-only at `/opt/dataset-platform/data-collection/data/7e2fa4b1/config.yaml`, where the service looks for its default config. Tune a running deployment by editing that generated copy and restarting the container; there is no runtime hot reload. Administrators with the relevant Docker privileges can still read the config file and the logs.
+The deploy script resolves the usernames and GPU, writes `uids` and `gpu_uuid` into a generated copy at `~/.data_collection_state/<hash>/config.yaml`, validates it, then mounts that file read-only at `/opt/dataset-platform/data-collection/data/7e2fa4b1/config.yaml`, where the service looks for its default config. Tune a running deployment by editing that generated copy and restarting the container; there is no runtime hot reload. The state directory lives under the operator's home so deployments never dirty the skill checkout, and `DATA_COLLECTION_STATE` overrides its location. Administrators with the relevant Docker privileges can still read the config file and the logs.
 
 The script builds `data-collection:24.04` and names the container `data-collection-<first 12 hex digits of the SHA-256 of the GPU UUID>`, with the host socket directory at `/run/data-collection-<same hash>/`. The module lives at `/opt/dataset-platform/data-collection/data/7e2fa4b1/data_collection.py` and runs as container root. The entrypoint is `python3 -c "import data_collection; data_collection.main()"` and takes no arguments, so process listings show only that snippet, never the script path, the UID, or the GPU UUID. The comm name is also set to `data-collection`, so the default `top` COMMAND column shows `data-collection` instead of `python3`. It uses `--pid=host` to attribute host UIDs, exposes only the chosen GPU, disables container networking, and drops Linux capabilities. After a clean start it sets the `unless-stopped` restart policy; a failed first start stops the container and reports the logs rather than retrying indefinitely. See [assets/Dockerfile](assets/Dockerfile).
 
@@ -97,13 +97,13 @@ The neutral naming changes only what `top` and `ps` show at a glance; it is neit
 python3 scripts/test_reserver.py
 
 # read-only inspection; point --config at a copy holding the real uids and gpu_uuid
-python3 assets/data_collection.py --config .state/<hash>/config.yaml --inspect
+python3 assets/data_collection.py --config ~/.data_collection_state/<hash>/config.yaml --inspect
 
 # build plus a small in-container test: allocate only 16 MiB, run one short kernel, exit
 # identity still comes from the config file, not from arguments
 docker build -t data-collection:24.04 assets
 docker run --rm --gpus device=GPU-... --pid=host --network=none \
-  --mount "type=bind,src=$PWD/.state/<hash>/config.yaml,dst=/opt/dataset-platform/data-collection/data/7e2fa4b1/config.yaml,readonly" \
+  --mount "type=bind,src=$HOME/.data_collection_state/<hash>/config.yaml,dst=/opt/dataset-platform/data-collection/data/7e2fa4b1/config.yaml,readonly" \
   data-collection:24.04 --smoke-test
 
 # container integration test: keep most memory free and disable the extra kernel load

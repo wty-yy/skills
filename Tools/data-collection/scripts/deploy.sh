@@ -32,7 +32,8 @@ fi
 container="data-collection-$(printf %s "$gpu_uuid" | sha256sum | cut -c1-12)"
 image='data-collection:24.04'
 socket_dir="/run/$container"
-state_dir="$skill_dir/.state/${container#data-collection-}"
+state_root="${DATA_COLLECTION_STATE:-$HOME/.data_collection_state}"
+state_dir="$state_root/${container#data-collection-}"
 runtime_config="$state_dir/config.yaml"
 config_path='/opt/dataset-platform/data-collection/data/7e2fa4b1/config.yaml'
 if docker container inspect "$container" >/dev/null 2>&1; then
