@@ -1,0 +1,3 @@
+interface:
+  display_name: "Linux VNC Remote Control"
+  short_description: "部署和排查 Linux X11 多屏远程桌面，支持 VNC、noVNC 和 ZeroTier"

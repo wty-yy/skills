@@ -1,0 +1,25 @@
+--- a/unix/x0vncserver/XDesktop.cxx
++++ b/unix/x0vncserver/XDesktop.cxx
+@@ -72,6 +72,11 @@
+               "mapping them to the current keyboard layout",
+               false);
+ core::IntParameter
++  keyEventDelay("KeyEventDelay",
++                "Delay in milliseconds after each key release, allowing "
++                "applications to consume events before keycode reuse",
++                0, 0, 1000);
++core::IntParameter
+   queryConnectTimeout("QueryConnectTimeout",
+                       "Number of seconds to show the 'Accept "
+                       "connection' dialog before rejecting the "
+@@ -604,6 +609,10 @@
+   vlog.debug("%d %s", keycode, down ? "down" : "up");
+ 
+   XTestFakeKeyEvent(dpy, keycode, down, CurrentTime);
++  if (!down && keyEventDelay > 0) {
++    XSync(dpy, False);
++    usleep(static_cast<unsigned int>(keyEventDelay) * 1000);
++  }
+ #else
+   (void)keysym;
+   (void)xtcode;

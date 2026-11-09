@@ -22,6 +22,7 @@ Categories follow `<category>/<skill>/SKILL.md`; the installers discover them au
 - [cloud189-download](Tools/Downloader/cloud189-download/): download Tianyi Cloud folders with resumable ranges and MD5 verification.
 - [data-collection](Tools/data-collection/): deploy a Docker service that reserves GPU memory for one host user.
 - [get-wandb-data-from-chrome-cookie](Tools/Downloader/get-wandb-data-from-chrome-cookie/): download W&B run data.
+- [linux-vnc-remote-control](Tools/linux-vnc-remote-control/): configure SSH and multi-monitor X11 desktop sharing on Debian/Ubuntu with TigerVNC, noVNC, and optional ZeroTier setup guidance.
 - [wechat-get-data](Tools/Downloader/wechat-get-data/): read local Linux WeChat records and recover emoji.
 - [youtube-download](Tools/Downloader/youtube-download/): download videos, audio, and bilingual subtitles.
 - [yuketang-background](Tools/yuketang-background/): manage Yuketang course tasks.

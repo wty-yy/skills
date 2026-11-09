@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Share each detected X11 monitor using TigerVNC and noVNC.
+set -uo pipefail
+
+export DISPLAY="${DISPLAY:-:1}"
+VNC_SERVER=@VNC_SERVER@
+NOVNC_PROXY=@NOVNC_PROXY@
+component_pids=()
+
+cleanup() {
+    trap - INT TERM
+    if ((${#component_pids[@]})); then
+        kill "${component_pids[@]}" 2>/dev/null || true
+        wait "${component_pids[@]}" 2>/dev/null || true
+    fi
+    exit 0
+}
+
+trap cleanup INT TERM
+
+run_component() {
+    local component_name=$1
+    shift
+    local child_pid="" exit_status
+
+    trap 'if [[ -n "$child_pid" ]]; then kill "$child_pid" 2>/dev/null || true; wait "$child_pid" 2>/dev/null || true; fi; exit 0' INT TERM
+
+    while true; do
+        "$@" &
+        child_pid=$!
+        wait "$child_pid"
+        exit_status=$?
+        child_pid=""
+        printf '[%s] Exited with status %s; retrying in 5 seconds.\n' "$component_name" "$exit_status" >&2
+        sleep 5 &
+        child_pid=$!
+        wait "$child_pid"
+        child_pid=""
+    done
+}
+
+run_vnc() {
+    # Refresh the authority file after login or an X11 session restart.
+    local candidate authority=${XAUTHORITY:-}
+    if [[ -z "$authority" || ! -r "$authority" ]]; then
+        for candidate in "/run/user/$(id -u)/gdm/Xauthority" "$HOME/.Xauthority"; do
+            if [[ -r "$candidate" ]]; then
+                authority=$candidate
+                break
+            fi
+        done
+    fi
+    if [[ -z "$authority" || ! -r "$authority" ]]; then
+        printf '[TigerVNC] Waiting for an X11 authority file.\n' >&2
+        return 1
+    fi
+    export XAUTHORITY="$authority"
+    exec "$VNC_SERVER" "$@"
+}
+
+start_screen() {
+    local screen=$1 vnc_port=$2 web_port=$3 geometry=$4
+
+    printf '[Screen %s] TigerVNC :%s, noVNC :%s, geometry %s\n' "$screen" "$vnc_port" "$web_port" "$geometry"
+    run_component "TigerVNC $screen" run_vnc \
+        -display "$DISPLAY" \
+        -PasswordFile /etc/x11vnc.pass \
+        -SecurityTypes TLSVnc,VncAuth \
+        -AlwaysShared 1 \
+        -DisconnectClients 0 \
+        -Geometry "$geometry" \
+        -rfbport "$vnc_port" \
+        -KeyEventDelay 20 \
+        -Log '*:stderr:10' &
+    component_pids+=("$!")
+
+    run_component "noVNC $screen" "$NOVNC_PROXY" \
+        --vnc "localhost:$vnc_port" --listen "$web_port" &
+    component_pids+=("$!")
+}
+
+@SCREEN_COMMANDS@
+
+wait
