@@ -5,37 +5,41 @@ description: Check and update project-level AGENTS.md with AI experiment and bul
 
 # Coding Project Standards
 
-## 使用范围
+## Scope
 
-主要维护项目根目录的 `AGENTS.md`，将 AI 自行实验和大量数据的存放要求写为项目级规范。执行本 skill 时只检查和修改规范文件，不直接创建实验目录或移动数据。不额外规定正式源码或正式测试的命名与目录位置。
+Maintain the project root `AGENTS.md` with project-level rules for AI-run experiments and bulk data storage. Only inspect and edit standards files when running this skill; do not create experiment directories or move data. Do not impose additional naming or directory rules on production source code or formal tests.
 
-## 检查与更新流程
+## Language
 
-1. 确定目标项目根目录，读取该目录的 `AGENTS.md`。若项目现用文件为小写 `agents.md`，沿用该文件，避免创建大小写不同的重复文件。
-2. 检查全文是否已有 AI 实验目录、实验产物分类、大量数据存放、数据大小阈值或时间戳命名方面的规定。按含义判断重复或重叠，不只匹配标题和目录名。
-3. 若已有相关规定，列出文件位置、现有要求与下方标准的重复或冲突点，提示用户检查。本次不自动覆盖、合并或追加这组要求；部分已覆盖时，同时说明缺少哪些要求。已有规定完整且一致时，也应说明无需重复添加。
-4. 若没有相关规定，在文件末尾添加下方标准文本，保留其他内容。文件不存在时，创建项目根目录的 `AGENTS.md`，写入 `# AGENTS.md` 和标准文本。
-5. 复查修改后的文件，确认只添加了缺少的规范，没有改动无关内容。
+Write new or updated standards in English by default, including the text added to `AGENTS.md`, unless the user explicitly requests another language. Preserve the language and content of unrelated existing sections.
 
-## 待写入的标准文本
+## Review and Update Workflow
 
-以下路径均相对于项目根目录，将本段及以下规则写入目标规范小节：
+1. Identify the target project root and read its `AGENTS.md`. If the project already uses lowercase `agents.md`, keep using that file to avoid creating a duplicate with different capitalization.
+2. Check the entire file for existing rules covering AI experiment directories, artifact categories, bulk data storage, size thresholds, or timestamp naming. Identify overlap by meaning, not just matching headings or directory names.
+3. If related rules already exist, report their location and any overlap or conflicts with the standard below for the user to review. Do not automatically overwrite, merge, or append this set of rules. For partial coverage, also identify missing requirements; for complete and consistent coverage, explain that no duplicate addition is needed. If the user explicitly requests an update or translation of existing rules, make that requested change while preserving unrelated content.
+4. If no related rules exist, append the standard text below and preserve all other content. If the file does not exist, create `AGENTS.md` in the project root with `# AGENTS.md` followed by the standard text.
+5. Review the result to confirm that only the required standards were added or explicitly requested changes were made, without changing unrelated content.
+
+## Standard Text to Insert
+
+Insert the following section in English by default:
 
 ```markdown
-## AI 实验与数据目录规范
+## AI Experiment and Data Directory Standards
 
-- 所有路径均相对于项目根目录。
-- 时间戳使用本地当前时间，格式为 `YYYYMMDD_HHMMSS`，例如 `20261025_150710`。
-- AI 自行实验放在 `debug_ai/<时间戳>_<实验命名>/`，实验名称简短说明目的，同一实验的后续操作沿用原目录。
-- 实验目录内，代码放在 `src/`，图片放在 `fig/`，视频放在 `vid/`，数据放在 `data/`，按需创建子目录。
-- 同一实验或同一批收集数据的累计大小超过 `100 MB` 时，将该批数据移动到 `debug_data/<时间戳>_<数据命名>/`，按整批数据判断，不只判断单个文件。
-- 数据名称简短说明内容，同一批数据的后续操作沿用原目录；已知将超过阈值的数据直接保存到该数据目录。
-- 实验中的大量数据从 `data/` 迁出，代码、图片和视频保留在原实验目录；避免在原位置保留重复数据副本。
-- 移动数据后，更新受影响的脚本路径或配置，确认实验仍能找到数据。
-- 在项目根目录的 `.gitignore` 中添加 `/debug_ai/` 和 `/debug_data/`，忽略这两个目录及其内容；保留现有规则，已有等效忽略规则时不重复添加。
+- All paths are relative to the project root.
+- Use the current local time for timestamps in `YYYYMMDD_HHMMSS` format, for example `20261025_150710`.
+- Store AI-run experiments in `debug_ai/<timestamp>_<experiment_name>/`. Use a short name describing the purpose, and reuse the same directory for follow-up work on that experiment.
+- Within an experiment directory, store code in `src/`, images in `fig/`, videos in `vid/`, and data in `data/`. Create subdirectories as needed.
+- If the cumulative size of an experiment or a collected data batch exceeds `100 MB`, move that batch to `debug_data/<timestamp>_<data_name>/`. Apply the threshold to the entire batch, not just individual files.
+- Use a short name describing the data, and reuse the same directory for follow-up work on that batch. Save data directly there when it is known in advance that the threshold will be exceeded.
+- When moving bulk data out of an experiment's `data/` directory, keep code, images, and videos in the original experiment directory. Avoid retaining duplicate data copies at the original location.
+- After moving data, update affected script paths or configurations and verify that the experiment can still find its data.
+- Add `/debug_ai/` and `/debug_data/` to the project root `.gitignore` to ignore both directories and their contents. Preserve existing rules, and do not add duplicates when equivalent rules already exist.
 ```
 
-## 输出要求
+## Output Requirements
 
-- 已更新时，说明规范文件路径及新增要求。
-- 检测到已有规定时，给出具体位置及需要用户检查的重复、冲突或缺失项，说明未自动修改。
+- After an update, report the standards file path and the requirements added or changed.
+- When existing rules prevent an automatic addition, report their location and any overlap, conflicts, or missing requirements that need review, and state that no automatic changes were made.
