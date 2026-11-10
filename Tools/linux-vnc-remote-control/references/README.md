@@ -6,6 +6,8 @@ This script configures SSH, TigerVNC, and noVNC on Debian/Ubuntu, with optional 
 
 The default builds TigerVNC `1.16.2`, applies the bundled input patch, and sets `KeyEventDelay=20` for continuous Chinese input through AVNC's phone keyboard.
 
+The keymap recovery patch enables `RecoverKeyMappings` by default. It records temporary mappings and their owning instances in X11. When slots run out, it only recovers mappings whose owner has exited, whose contents are unchanged, and whose key is released. An X server grab serializes allocation and recovery across screen servers. Unregistered mappings left by older builds are not automatically cleared.
+
 ## Usage
 
 ```bash
@@ -25,7 +27,7 @@ sudo python3 auto_remote_config.py \
 
 An empty `--zt_network_id` skips ZeroTier. `--proxy` accepts a port, `host:port`, or a complete proxy URL; APT uses an environment without proxy variables.
 
-Setup generates and restarts `multivnc.service`. The first source build requires network access; an installed, matching patched binary is reused.
+Setup generates and restarts `multivnc.service`. The first source build requires network access. A binary is reused only when its version matches and it supports both `KeyEventDelay` and `RecoverKeyMappings`; older patched builds are rebuilt.
 
 ### Connections
 
@@ -51,6 +53,7 @@ sudo journalctl -u multivnc.service -f
 
 - `auto_remote_config.py`: install dependencies, verify the source SHA-256, build TigerVNC, detect monitors, and generate the system service.
 - `tigervnc-key-event-delay.patch`: add a configurable delay after key releases.
+- `tigervnc-keymap-recovery.patch`: record temporary mapping ownership and recover slots after an instance exits unexpectedly.
 - `start_multivnc.sh.in`: generate the per-monitor launcher and retry exited TigerVNC and noVNC processes.
 
 Installed paths:
@@ -63,3 +66,13 @@ Installed paths:
 - Password file: `/etc/x11vnc.pass`, retaining the existing filename for compatibility, with mode `0640` and read access for the service user's group
 
 The default X11 display is `:1`. The launcher prefers `XAUTHORITY`, then checks `/run/user/<uid>/gdm/Xauthority` and `~/.Xauthority`; before login, it waits for an authority file to become available.
+
+### Verify keymap recovery
+
+Install the test dependencies `xvfb` and `python3-xlib`, then run against the newly built binary:
+
+```bash
+/usr/bin/python3 tests/test_keymap_recovery.py --server ~/.local/bin/x0vncserver-avnc -v
+```
+
+Tests create a private Xvfb desktop and loopback-only test ports. They cover crash recovery, more than 19 distinct Chinese characters, live-owner protection, unregistered or modified mappings, held keys, and normal shutdown cleanup without connecting to the current desktop. Use `--xvfb /path/to/Xvfb` for a custom Xvfb path. These tests do not establish a fix for the underlying Xlib/XCB crashes.

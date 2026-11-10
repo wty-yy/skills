@@ -1,0 +1,200 @@
+--- a/unix/x0vncserver/XDesktop.cxx
++++ b/unix/x0vncserver/XDesktop.cxx
+@@ -38,6 +38,7 @@
+ 
+ #include <X11/XKBlib.h>
+ #include <X11/Xutil.h>
++#include <X11/Xatom.h>
+ #ifdef HAVE_XTEST
+ #include <X11/extensions/XTest.h>
+ #endif
+@@ -80,6 +81,35 @@
+ 
+ static core::LogWriter vlog("XDesktop");
+ 
++static core::BoolParameter recoverKeyMappings(
++  "RecoverKeyMappings", "Recover registered key mappings after a server crash", true);
++
++#ifdef HAVE_XTEST
++// Serialize allocation/recovery across screen servers sharing one X keyboard.
++class KeyboardMap {
++public:
++  explicit KeyboardMap(Display* display) : dpy(display) {
++    XGrabServer(dpy);
++    map = XkbGetMap(dpy, XkbAllComponentsMask, XkbUseCoreKbd);
++  }
++  ~KeyboardMap() {
++    if (map)
++      XkbFreeKeyboard(map, XkbAllComponentsMask, True);
++    XUngrabServer(dpy);
++    XFlush(dpy);
++  }
++  XkbDescPtr map;
++private:
++  Display* dpy;
++};
++
++static Atom keymapAtom(Display* dpy, unsigned int key) {
++  char name[64];
++  snprintf(name, sizeof(name), "_TIGERVNC_KEYCODE_V1_%u", key);
++  return XInternAtom(dpy, name, False);
++}
++#endif
++
+ // order is important as it must match RFB extension
+ static const char * ledNames[XDESKTOP_N_LEDS] = {
+   "Scroll Lock", "Num Lock", "Caps Lock"
+@@ -89,7 +119,7 @@
+   : dpy(dpy_), geometry(geometry_), pb(nullptr), server(nullptr),
+     queryConnectDialog(nullptr), queryConnectSock(nullptr), selection(dpy_, this),
+     oldButtonMask(0), haveXtest(false), haveDamage(false),
+-    maxButtons(0), running(false), ledMasks(), ledState(0),
++    maxButtons(0), keymapOwner(None), running(false), ledMasks(), ledState(0),
+     codeMap(nullptr), codeMapLen(0)
+ {
+   int major, minor;
+@@ -218,11 +248,14 @@
+ #endif
+ 
+   TXWindow::setGlobalEventHandler(this);
++  keymapOwner = XCreateSimpleWindow(dpy, DefaultRootWindow(dpy),
++                                  0, 0, 1, 1, 0, 0, 0);
+ }
+ 
+ XDesktop::~XDesktop() {
+   if (running)
+     stop();
++  XDestroyWindow(dpy, keymapOwner);
+ }
+ 
+ 
+@@ -454,6 +487,51 @@
+   return 0;
+ }
+ 
++KeyCode XDesktop::getOrphanedKeycode(XkbDescPtr xkb)
++{
++  char pressed[32];
++  XQueryKeymap(dpy, pressed);
++  for (unsigned int key = xkb->min_key_code; key <= xkb->max_key_code; key++) {
++    if ((pressed[key / 8] & (1 << (key % 8))) ||
++        XkbKeyNumGroups(xkb, key) != 1)
++      continue;
++
++    Atom atom = keymapAtom(dpy, key);
++    // Selection ownership disappears automatically when its X client dies.
++    if (XGetSelectionOwner(dpy, atom) != None)
++      continue;
++
++    Atom type;
++    int format;
++    unsigned long count, remaining;
++    unsigned char* data = nullptr;
++    int status = XGetWindowProperty(dpy, DefaultRootWindow(dpy), atom,
++                                   0, 6, False, XA_CARDINAL,
++                                   &type, &format, &count, &remaining, &data);
++    bool matches = false;
++    if (status == Success && type == XA_CARDINAL &&
++        format == 32 && remaining == 0 && count == 6) {
++      const unsigned long* saved = reinterpret_cast<unsigned long*>(data);
++      for (int i = 0; !matches && i < 6; i += 3) {
++        int width = saved[i + 2] == NoSymbol ? 1 : 2;
++        matches = saved[i + 1] != NoSymbol &&
++                  saved[i] == XkbKeyKeyTypeIndex(xkb, key, 0) &&
++                  width == XkbKeyNumSyms(xkb, key) &&
++                  saved[i + 1] == XkbKeySymsPtr(xkb, key)[0];
++        if (matches && width == 2)
++          matches = saved[i + 2] == XkbKeySymsPtr(xkb, key)[1];
++      }
++    }
++    if (data)
++      XFree(data);
++    if (matches) {
++      vlog.info("Recovering orphaned keycode %u", key);
++      return key;
++    }
++  }
++  return 0;
++}
++
+ KeyCode XDesktop::addKeysym(KeySym keysym)
+ {
+   int types[1];
+@@ -463,7 +541,8 @@
+   KeySym *syms;
+   KeySym upper, lower;
+ 
+-  xkb = XkbGetMap(dpy, XkbAllComponentsMask, XkbUseCoreKbd);
++  KeyboardMap keyboard(dpy);
++  xkb = keyboard.map;
+ 
+   if (!xkb)
+     return 0;
+@@ -476,8 +555,20 @@
+   if (key < xkb->min_key_code)
+     key = getReusableKeycode(xkb);
+ 
++  if (!key && recoverKeyMappings)
++    key = getOrphanedKeycode(xkb);
++
+   if (!key)
+     return 0;
++
++  // Retain both sides of the update in case the client dies between requests.
++  unsigned long saved[6] = {};
++  if (XkbKeyNumGroups(xkb, key) == 1 && XkbKeyNumSyms(xkb, key) <= 2) {
++    saved[3] = XkbKeyKeyTypeIndex(xkb, key, 0);
++    saved[4] = XkbKeySymsPtr(xkb, key)[0];
++    if (XkbKeyNumSyms(xkb, key) == 2)
++      saved[5] = XkbKeySymsPtr(xkb, key)[1];
++  }
+ 
+   memset(&changes, 0, sizeof(changes));
+ 
+@@ -502,6 +593,18 @@
+   changes.first_key_sym = key;
+   changes.num_key_syms = 1;
+ 
++  if (recoverKeyMappings) {
++    Atom atom = keymapAtom(dpy, key);
++    saved[0] = types[XkbGroup1Index];
++    saved[1] = syms[0];
++    saved[2] = upper == lower ? NoSymbol : syms[1];
++    // Journal before changing the map, under the same server grab.
++    XSetSelectionOwner(dpy, atom, keymapOwner, CurrentTime);
++    XChangeProperty(dpy, DefaultRootWindow(dpy), atom, XA_CARDINAL, 32,
++                    PropModeReplace, reinterpret_cast<unsigned char*>(saved),
++                    6);
++  }
++
+   if (XkbChangeMap(dpy, xkb, &changes)) {
+     vlog.info("Added unknown keysym XK_%s (0x%04x) to keycode %d",
+               XKeysymToString(keysym), (unsigned)keysym, key);
+@@ -514,7 +617,8 @@
+ 
+ void XDesktop::deleteAddedKeysyms() {
+   XkbDescPtr xkb;
+-  xkb = XkbGetMap(dpy, XkbAllComponentsMask, XkbUseCoreKbd);
++  KeyboardMap keyboard(dpy);
++  xkb = keyboard.map;
+ 
+   if (!xkb)
+     return;
+--- a/unix/x0vncserver/XDesktop.h
++++ b/unix/x0vncserver/XDesktop.h
+@@ -96,6 +96,7 @@
+   bool haveDamage;
+   int maxButtons;
+   std::list<AddedKeySym> addedKeysyms;
++  Window keymapOwner;
+   std::map<KeySym, KeyCode> pressedKeys;
+   bool running;
+ #ifdef HAVE_XDAMAGE
+@@ -120,6 +121,7 @@
+ #ifdef HAVE_XTEST
+   KeyCode XkbKeysymToKeycode(KeySym keysym);
+   KeyCode getReusableKeycode(XkbDescPtr xkb);
++  KeyCode getOrphanedKeycode(XkbDescPtr xkb);
+   KeyCode addKeysym(KeySym keysym);
+   void deleteAddedKeysyms();
+   KeyCode keysymToKeycode(KeySym keysym);

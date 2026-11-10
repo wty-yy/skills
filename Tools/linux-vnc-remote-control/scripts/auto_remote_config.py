@@ -2,7 +2,7 @@
 """Configure SSH, TigerVNC desktop sharing, noVNC, and optional ZeroTier.
 
 Overview:
-    Build TigerVNC with the bundled input-pacing patch and create one shared
+    Build TigerVNC with the bundled keyboard patches and create one shared
     X11 screen endpoint per monitor, managed by multivnc.service.
 
 Quick Start:
@@ -144,7 +144,7 @@ def install_missing_packages(packages, apt_env):
     run_cmd(f"apt-get install -y {' '.join(missing_packages)}", env=apt_env)
 
 class TigerVNCInstaller:
-    """Install the pinned TigerVNC server with the bundled key-event delay option."""
+    """Install the pinned TigerVNC server with input pacing and keymap recovery."""
 
     VERSION = "1.16.2"
     SOURCE_SHA256 = "b107c0c8b8a962594281690366c24186e95c2ea4a169acbc0076aa62ed01f467"
@@ -163,14 +163,15 @@ class TigerVNCInstaller:
         self.binary = Path(user_info.pw_dir) / ".local/bin/x0vncserver-avnc"
 
     def is_ready(self):
-        """Check whether the installed server has the pinned version and pacing patch."""
+        """Check whether the installed server has the pinned version and both patches."""
         if not self.binary.is_file() or not os.access(self.binary, os.X_OK):
             return False
         version = subprocess.run([str(self.binary), "-version"], capture_output=True, text=True)
         help_output = subprocess.run([str(self.binary), "-help"], capture_output=True, text=True)
         return (version.returncode == 0
                 and f"version {self.VERSION}," in version.stdout + version.stderr
-                and "KeyEventDelay" in help_output.stdout + help_output.stderr)
+                and "KeyEventDelay" in help_output.stdout + help_output.stderr
+                and "RecoverKeyMappings" in help_output.stdout + help_output.stderr)
 
     def install(self):
         """Build and install the patched server unless a matching binary already exists."""
@@ -195,8 +196,9 @@ class TigerVNCInstaller:
         if build.exists():
             shutil.rmtree(build)
         run_cmd(["tar", "-xzf", str(archive), "-C", str(cache)])
-        patch = Path(__file__).resolve().with_name("tigervnc-key-event-delay.patch")
-        run_cmd(["patch", "--directory", str(source), "-p1", "--input", str(patch)])
+        for patch_name in ("tigervnc-key-event-delay.patch", "tigervnc-keymap-recovery.patch"):
+            patch = Path(__file__).resolve().with_name(patch_name)
+            run_cmd(["patch", "--directory", str(source), "-p1", "--input", str(patch)])
         run_cmd([
             "cmake", "-S", str(source), "-B", str(build),
             "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_VIEWER=OFF",

@@ -11,10 +11,12 @@ description: 在 Debian/Ubuntu 上安装、配置或排查共享当前 X11 桌�
 
 - [scripts/auto_remote_config.py](scripts/auto_remote_config.py)：安装依赖、校验并编译 TigerVNC、检测屏幕、生成 systemd 服务。
 - [scripts/tigervnc-key-event-delay.patch](scripts/tigervnc-key-event-delay.patch)：TigerVNC 键盘事件延时补丁。
+- [scripts/tigervnc-keymap-recovery.patch](scripts/tigervnc-keymap-recovery.patch)：临时键码归属登记与异常退出恢复补丁。
 - [scripts/start_multivnc.sh.in](scripts/start_multivnc.sh.in)：按屏幕启动并自动重试 TigerVNC 和 noVNC 的模板。
+- [scripts/tests/test_keymap_recovery.py](scripts/tests/test_keymap_recovery.py)：在隔离 Xvfb 中验证崩溃恢复和多实例映射保护；依赖 `xvfb`、`python3-xlib`。
 - 使用和安装位置详见 [中文说明](references/README.zh-CN.md) 或 [English guide](references/README.md)。其中安装命令从本 skill 的 `scripts/` 目录执行。
 
-以上文件复制自 `dotfiles/scripts/auto_remote_config/`。部署时使用 skill 内的副本，不依赖原仓库路径。Python 脚本通过自身路径查找补丁和模板，因此三个运行文件必须放在同一目录；远程部署时一并传输。
+以上文件复制自 `dotfiles/scripts/auto_remote_config/`。部署时使用 skill 内的副本，不依赖原仓库路径。Python 安装脚本通过自身路径查找补丁和模板，因此安装脚本、两个补丁和启动模板必须放在同一目录；远程部署时一并传输。
 
 ## 部署前
 
@@ -61,7 +63,7 @@ sudo python3 auto_remote_config.py \
 
 替换占位符后执行；不使用的可选参数直接省略。代理接受端口、`host:port` 或完整 URL，仅用于下载等网络请求，APT 环境会移除代理变量。
 
-脚本会启用 SSH；默认构建 TigerVNC `1.16.2`，验证源码 SHA-256 并应用输入补丁；安装 noVNC；按 `xrandr` 检测结果创建各屏幕端点，启用并重启 `multivnc.service`。相同版本且具备 `KeyEventDelay` 的二进制会复用。启动模板设置 `KeyEventDelay=20`，用于 AVNC 手机键盘连续输入中文。
+脚本会启用 SSH；默认构建 TigerVNC `1.16.2`，验证源码 SHA-256 并应用两个补丁；安装 noVNC；按 `xrandr` 检测结果创建各屏幕端点，启用并重启 `multivnc.service`。只有相同版本且同时具备 `KeyEventDelay`、`RecoverKeyMappings` 的二进制才会复用。启动模板设置 `KeyEventDelay=20`，用于 AVNC 手机键盘连续输入中文；键码恢复默认开启。
 
 脚本末尾会打印 VNC 密码，分享日志或汇报结果时隐去密码。ZeroTier 加网请求后，如网络要求授权，还需在对应管理端批准；加网请求成功不等于已连通。
 
@@ -95,5 +97,6 @@ sudo journalctl -u multivnc.service -f
 - 端口未监听或连接失败：结合组件日志、端口占用、目标 IP 和现有网络规则定位，不仅依靠服务状态判断。
 - 屏幕布局改变：启动脚本保存的是安装时的几何参数，不会实时重新检测；按新检测结果更新启动脚本，或在备份并确认参数后重新运行安装。
 - 编译或下载失败：查看具体失败命令、代理和 SHA-256 校验结果；不要跳过源码校验。
+- 中文输入出现 `Failure adding new keysym`：检查键码是否耗尽、进程是否异常退出以及是否运行恢复补丁。补丁只回收已登记、所属实例已退出、内容未变且未按下的映射；旧版残留没有归属记录，需要备份后单独判断，不能在各屏幕重启时批量清空 Unicode 映射。Xlib/XCB 崩溃本身需另行排查。
 
 安装位置和完整依赖以随附脚本及参考说明为准。修复时只调整与当前问题有关的配置。
