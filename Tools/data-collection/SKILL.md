@@ -45,7 +45,7 @@ uid: 1000            # or uids: [1000, 1001] to share one card between several u
 gpu_uuid: GPU-...
 reserve_mib: 1024
 startup_seconds: 30
-stable_seconds: 60
+stable_seconds: 240
 restart_seconds: 43200
 idle_duty: 0.65
 shared_duty: 0.03
@@ -55,7 +55,7 @@ shared_duty: 0.03
 | --- | --- |
 | `reserve_mib` | free memory to keep, 1024 by default. Raise it to 3072-4096 when a target user's job allocates in steps, otherwise that job can hit OOM after the window closes. |
 | `startup_seconds` | minimum release window after a launch request, 30 by default. Raise it for slow model loading. |
-| `stable_seconds` | quiet period before reservations come back, 60 by default. A change of 1 GiB or less counts as stable; anything larger restarts the wait. |
+| `stable_seconds` | quiet period before reservations come back, 240 by default. A change of 1 GiB or less counts as stable; anything larger restarts the wait. |
 | `restart_seconds` | clean exit that lets Docker rebuild the CUDA context, 43200 (12 hours) by default. |
 | `idle_duty` | extra load while no target UID holds a GPU process, 0.65 by default, the 50-80% occupancy range. |
 | `shared_duty` | extra load while a target UID does hold one, 0.03 by default. Setting it equal to `idle_duty` keeps the card occupied even during that user's own jobs. |

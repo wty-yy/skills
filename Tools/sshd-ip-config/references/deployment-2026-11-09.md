@@ -11,8 +11,8 @@
 | 原服务 | `ssh.service`、`ssh.socket`，端口 `22` |
 | 新服务 | `sshd-trusted.service`，已启动并设置开机启动 |
 | 新监听地址 | `0.0.0.0:2222`，仅 IPv4 |
-| 允许来源 | `115.154.236.42/32` |
-| 允许账户 | `AllowUsers *@115.154.236.42`，允许该来源使用服务器上的正常账户认证登录 |
+| 允许来源 | `115.154.236.42/32`、`115.154.240.163/32` |
+| 允许账户 | `AllowUsers *@115.154.236.42 *@115.154.240.163`，允许上述来源使用服务器上的正常账户认证登录 |
 | 认证 | 保留密码、公钥及 PAM；账户仍需通过原有认证和账户检查 |
 | root 登录 | 保留 `PermitRootLogin prohibit-password`，不开放 root 密码登录 |
 | 防火墙 | 独立 nftables 表 `inet sshd_trusted`，仅处理 TCP `2222` |
@@ -123,11 +123,55 @@ sudo systemctl restart sshd-trusted.service
 - 未重启服务器；已检查开机启动链接和启动前加载规则的配置。
 - 2026-11-09 11:06，真实客户端已从 `115.154.236.42:36754` 连接 `10.184.17.133:2222`，以 `wutianyang` 登录到 `pts/7`。会话进程 `1348610` 的父进程为 `1348564`，后者由新服务主进程 `1286388` 创建，确认真实客户端通过独立服务登录成功。
 
-## 原有限制说明
+## 白名单变更
 
-两个实例分别计算 `MaxStartups 10:30:100`：未认证连接少于 `10` 个时不触发该项限制，达到 `10` 个时以 `30%` 概率拒绝新连接，随连接数增加提高拒绝概率，达到 `100` 个时全部拒绝。完成认证或断开后释放名额。
+### 2026-11-13 新增 `115.154.240.163`
 
-`LoginGraceTime 120` 是单条连接的认证期限，`MaxAuthTries 6` 是单条连接的认证尝试上限，均不是按 IP 累计失败后临时封禁。独立实例隔离连接额度，两个实例仍共享服务器 CPU、内存和网络。
+同时更新 `AllowUsers` 与 nftables 允许规则，保留原有 `115.154.236.42`：
+
+```bash
+cd /data/user/wutianyang/Documents/ai_search/sshd_config
+
+sudo /usr/sbin/sshd -t -f "$PWD/sshd_config_trusted"
+sudo nft -c -f "$PWD/sshd-trusted.nft"
+
+sudo install -o root -g root -m 0600 sshd_config_trusted /etc/ssh/sshd_config_trusted
+sudo install -o root -g root -m 0644 sshd-trusted.nft /etc/ssh/sshd-trusted.nft
+sudo systemctl reload sshd-trusted.service
+```
+
+验证结果：
+
+- `sshd -T` 显示 `allowusers *@115.154.236.42` 和 `allowusers *@115.154.240.163`。
+- `nft list table inet sshd_trusted` 中两条允许规则位于丢弃规则之前。
+- 在临时网络命名空间中模拟来源 `115.154.240.163` 连接 `2222`，收到 SSH banner；模拟非白名单来源超时，确认放行与丢弃规则均生效。测试用的网络命名空间、veth 和临时路由已清理。
+- 服务重载后仍为 `active`，主进程 PID 不变，`2222` 正常监听。
+
+## 连接限制调整
+
+### 2026-11-13 放宽 2222 的 `MaxStartups`
+
+将 `/etc/ssh/sshd_config_trusted` 中的 `MaxStartups 10:30:100` 改为 `MaxStartups 100000`；`PerSourceMaxStartups` 保持 `none`：
+
+```bash
+cd /data/user/wutianyang/Documents/ai_search/sshd_config
+sudo /usr/sbin/sshd -t -f "$PWD/sshd_config_trusted"
+sudo install -o root -g root -m 0600 sshd_config_trusted /etc/ssh/sshd_config_trusted
+sudo systemctl reload sshd-trusted.service
+```
+
+验证结果：
+
+- 生效值：`maxstartups 100000:30:100000`、`persourcemaxstartups none`。
+- 服务重载后 `active`，主进程 PID 不变，`2222` 正常监听。
+- OpenSSH 不支持“完全不限制”，`MaxStartups 0` 会被判为非法；`100000` 是实际不可达的高阈值，真实并发仍受 `LimitNOFILE=524288` 和内存限制。
+- 原 22 端口仍为默认 `10:30:100`，未改动。
+
+## 连接限制说明
+
+原 22 端口使用 OpenSSH 默认 `MaxStartups 10:30:100`：未认证连接少于 `10` 个时不触发该项限制，达到 `10` 个时以 `30%` 概率拒绝新连接，随连接数增加提高拒绝概率，达到 `100` 个时全部拒绝。完成认证或断开后释放名额。
+
+2222 端口已改为 `MaxStartups 100000:30:100000`，`PerSourceMaxStartups none` 不限制单个来源 IP。`LoginGraceTime 120` 是单条连接的认证期限，`MaxAuthTries 6` 是单条连接的认证尝试上限，均不是按 IP 累计失败后临时封禁。两个实例仍共享服务器 CPU、内存和网络。
 
 ## 停用与移除
 

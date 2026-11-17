@@ -1,0 +1,3 @@
+interface:
+  display_name: "Server Space Sniffer"
+  short_description: "Inspect Linux user and Docker storage allocation"

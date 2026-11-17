@@ -1,0 +1,2 @@
+# Explicit config prevents personal Dust settings from filtering this inventory.
+limit-filesystem = true

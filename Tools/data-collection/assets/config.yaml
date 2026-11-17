@@ -6,7 +6,7 @@ gpu_uuid: GPU-00000000-0000-0000-0000-000000000000
 reserve_mib: 1024
 startup_seconds: 30
 # Quiet period before re-reserving; a change of 1 GiB or less keeps it stable.
-stable_seconds: 60
+stable_seconds: 240
 # Exit cleanly after this much uptime so the container rebuilds its CUDA context.
 restart_seconds: 43200
 # idle_duty applies unless a target UID itself holds a GPU process.
