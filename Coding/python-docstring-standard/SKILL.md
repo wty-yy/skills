@@ -1,26 +1,35 @@
 ---
 name: python-docstring-standard
-description: Standardize Python function docstrings to a team format with a short summary, optional second-paragraph logic notes, optional Args/Returns sections. Default coding style uses four-space indentation and an object-oriented design mindset. Use when adding or normalizing docstrings in Python files, including class methods and nested callback functions.
+description: Standardize Python script headers, class docstrings, and function docstrings using a concise team format (short summary, optional prose logic notes, optional Args/Returns/Raises sections, and 4-space indentation). Use when adding, rewriting, or normalizing docstrings in Python scripts and modules.
 ---
 
 # Python Docstring Standard
 
-## Mandatory Opening Block (for Python script files)
-When editing a runnable Python script, the very beginning of the script text (typically module docstring/header) must include:
-1. What the script does (core functionality).
-2. A brief usage overview.
-3. If invokable from CLI:
-   - Minimal startup command.
-   - Full startup command with configurable options explained (only when extra configurable parameters are needed).
-4. Add a `Notes:` section for caveats, environment assumptions, or operational reminders when needed.
-5. If the script has no additional configurable parameters beyond the minimal command, omit both `Full Command:` and `Options:`.
+## Scope
 
-Recommended structure:
+Apply this skill when adding, rewriting, or normalizing docstrings in Python scripts or library modules.
+
+- During docstring-only passes, edit documentation text only and preserve function signatures, decorators, and runtime behavior.
+- Use 4 spaces per indentation level in all Python edits and examples; never use tabs.
+- When the user also asks to design or structure new Python code under this convention, prefer focused object-oriented classes to group related state and behavior; do not refactor existing code during a docstring-only pass.
+
+## Module and Script Headers
+
+### Runnable Python Scripts
+
+Place a module docstring at the top of runnable CLI scripts (after any shebang or encoding line) with:
+
+1. One-sentence summary of what the script does.
+2. `Overview:` briefly describing workflow and expected inputs/outputs.
+3. `Quick Start:` showing the minimal startup command (when CLI-invokable).
+4. `Full Command:` and `Options:` only when the script accepts extra configurable parameters beyond the minimal command; omit both sections otherwise.
+5. `Notes:` for operational caveats, environment assumptions, or reminders when needed.
+
 ```python
 """<Script purpose in one sentence>.
 
 Overview:
-<Brief description of workflow and expected input/output>.
+    <Brief description of workflow and expected input/output>.
 
 Quick Start:
     python path/to/script.py <required args>
@@ -37,57 +46,50 @@ Notes:
 """
 ```
 
-## Overview
-Apply this skill when the user asks to add, rewrite, or normalize Python docstrings by team convention. Edit only documentation text and keep runtime behavior unchanged.
+### Non-Script Library Modules
 
-## Coding Defaults
-- Use 4 spaces per indentation level in all Python code snippets and generated examples.
-- Do not use tab characters for indentation.
-- Prefer object-oriented decomposition when structure decisions are needed: model related state/behavior in classes, and keep method responsibilities focused.
-- For class methods, describe both the method action and its role within the class responsibility.
+Use a concise one-sentence summary (plus an optional second paragraph for module scope or caveats) without CLI command sections.
 
-## Required Format
-Use triple double quotes (`"""`) for every function entry (`def`), including class methods and nested functions unless the user narrows scope.
+## Class and Function Docstrings
+
+Use triple double quotes (`"""`) for classes, module-level functions, class methods, and non-trivial nested helpers. Skip trivial self-explanatory one-line nested callbacks or lambdas unless the user requests exhaustive coverage.
 
 Write docstrings in this order:
-1. First paragraph: one brief sentence describing the function's functionality.
-2. Second paragraph: if needed, describe invocation/build logic directly as normal prose.
-3. `Args:` section only when the function has input parameters worth documenting.
-4. `Returns:` section only when the function returns a meaningful value.
 
-Use this template:
+1. **Summary line**: one brief, concrete sentence describing what the class or function does (for class methods, make its role within the class clear).
+2. **Logic notes (optional)**: second paragraph written as plain prose without subheadings, explaining non-obvious invocation, state, or build logic.
+3. **`Args:` (optional)**: include only when there are meaningful parameters worth documenting; avoid restating obvious type hints.
+4. **`Returns:` (optional)**: include only when a meaningful value is returned; omit for `None`-returning procedures unless explicitly requested.
+5. **`Raises:` (optional)**: include only when callers need to handle notable exceptions raised intentionally by the function.
+
 ```python
-"""A brief description of the function's functionality.
+class ExampleRunner:
+    """Manage configuration state and execute example tasks.
 
-If necessary, include the calling/build logic here as normal second-paragraph prose. Do not use subheadings.
+    Holds resolved runtime options and coordinates setup and cleanup per run.
+    """
 
-Args:
-    arg1: Description for arg1.
-    arg2: Description for arg2.
+    def run(self, target: str, retries: int = 1) -> bool:
+        """Execute the configured task against a target.
 
-Returns:
-    A description of the return value.
-"""
+        Retries transient failures in order and stops on the first success.
+
+        Args:
+            target: Destination identifier to process.
+            retries: Maximum execution attempts before failing.
+
+        Returns:
+            True if the task succeeded within the allowed attempts.
+
+        Raises:
+            ValueError: If target is empty or retries is less than 1.
+        """
 ```
 
-## Strict Rules
-- Write logic notes directly in the second paragraph.
-- Omit `Args:` when there are no meaningful inputs.
-- Omit `Returns:` for `None`-style procedures unless the user explicitly wants it documented.
-- In script header blocks, omit `Full Command:` and `Options:` when no extra configurable parameters are required.
-- Put operational cautions and assumptions under `Notes:` when applicable.
-- Keep wording concise and concrete; avoid restating obvious type hints.
-- Use exactly 4 spaces for indentation in Python code examples and edits; never use tabs.
-- Prefer an object-oriented modeling approach by default unless the user explicitly asks for a different style.
+## Workflow and Verification
 
-## Editing Workflow
-1. Find all target `def` entries in scope.
-2. Add missing docstrings or normalize existing ones to the required format.
-3. Preserve function signatures, decorators, and executable code.
-4. Keep terminology consistent across related functions.
-5. Run syntax validation after edits (`python -m py_compile ...`) when feasible.
-
-## Output Expectations
-When reporting results, summarize:
-- Which files were updated.
-- Whether syntax validation was run and passed.
+1. Identify the target Python files and docstring scope (script header, classes, functions).
+2. Add missing docstrings or normalize existing ones to the template above while keeping terminology consistent across related symbols.
+3. Preserve all executable code, signatures, and decorators.
+4. Run syntax validation (`python3 -m py_compile <files>`) when feasible.
+5. Report which files were updated and whether syntax validation passed.

@@ -28,7 +28,7 @@ class InstallerTests(unittest.TestCase):
             (folder / 'SKILL.md').write_text('fixture\n')
         self.profile = self.root / 'profile with spaces'
         self.env = dict(os.environ, SKILLS_INSTALL_HOME=str(self.profile), LC_ALL='C')
-        for name in ['CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'XDG_CONFIG_HOME', 'DSH_HOME']:
+        for name in ['CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'XDG_CONFIG_HOME', 'DSH_HOME', 'AGY_CONFIG_DIR']:
             self.env.pop(name, None)
         self.links = self.profile / '.codex/skills'
 
@@ -108,6 +108,7 @@ class InstallerTests(unittest.TestCase):
         self.assertTrue((self.links / 'token-usage').is_symlink())
         self.assertFalse((self.profile / '.claude').exists())
         self.assertFalse((self.profile / '.dsh').exists())
+        self.assertFalse((self.profile / '.gemini').exists())
 
     def test_explicit_tool_is_preselected_and_can_add_dsh(self):
         keys = b'4\n\n' if options.powershell else b'jjj \n'
@@ -116,6 +117,14 @@ class InstallerTests(unittest.TestCase):
         self.assertIn('[x] codex', output)
         self.assertTrue((self.links / 'token-usage').is_symlink())
         self.assertTrue((self.profile / '.dsh/skills/token-usage').is_symlink())
+
+    def test_explicit_tool_can_add_agy(self):
+        keys = b'5\n\n' if options.powershell else b'jjjj \n'
+        output = self.interactive('install', ['codex'], [
+            self.tool_step(keys), self.skill_step(), self.skill_step()])
+        self.assertIn('[x] codex', output)
+        self.assertTrue((self.links / 'token-usage').is_symlink())
+        self.assertTrue((self.profile / '.gemini/config/skills/token-usage').is_symlink())
 
     def test_cancel_tool_selection_changes_nothing(self):
         self.interactive('install', ['codex'], [self.tool_step(b'q\n')])
@@ -163,9 +172,12 @@ class InstallerTests(unittest.TestCase):
 
     def test_batch_dsh_home_and_legacy_cleanup(self):
         self.env['DSH_HOME'] = str(self.root / 'custom dsh home')
+        self.env['AGY_CONFIG_DIR'] = str(self.root / 'custom agy config')
         self.batch('install', 'all')
         for relative in ['.claude', '.codex', '.config/opencode']:
             self.assertTrue((self.profile / relative / 'skills/token-usage').is_symlink())
+        agy_links = Path(self.env['AGY_CONFIG_DIR']) / 'skills'
+        self.assertTrue((agy_links / 'token-usage').is_symlink())
         links = Path(self.env['DSH_HOME']) / 'skills'
         self.assertTrue((links / 'token-usage').is_symlink())
         (links / 'token_usage').symlink_to(self.repo / 'Tools/token_usage')

@@ -1,6 +1,6 @@
 ---
 name: no-ai-slop
-description: Edit drafts into sharper, more human writing while preserving the writer's personal voice, or detect AI-slop patterns without rewriting. Use when the user wants a draft clearer, more direct, more opinionated, or less AI-sounding, or asks whether writing reads as AI.
+description: Edit English or Chinese drafts into sharper, more human writing while preserving the writer's personal voice, or detect AI-slop patterns without rewriting. Use for essays, blog posts, commentary, and general prose when the user wants writing clearer, more direct, or less AI-sounding, or asks to audit AI patterns (use dedicated skills instead for terse technical READMEs or formal Chinese project proposals).
 ---
 
 # No AI slop
@@ -86,6 +86,22 @@ Often-empty phrases: it's worth noting, it's important to note, at the end of th
 **Formatting slop.** Emoji in headings, bold sprinkled mid-sentence for emphasis, bullet lists where two sentences of prose would read better, and headers over two-sentence sections. Format should follow the content, not decorate it.
 
 **Em dashes.** Do not use them as a default rhythm crutch. In short copy, use none. In longer drafts, 1-2 are fine if they clearly beat commas, periods, or parentheses. Remove clusters and decorative dashes.
+
+## Chinese AI-slop patterns（中文 AI 腔）
+
+When editing or auditing Chinese prose, apply the same voice-preserving principles and watch for these common Chinese AI patterns:
+
+**高频空洞词与黑话：** 赋能、抓手、闭环、矩阵、范式、底层逻辑、全链路、深度融合、生态体系、核心引擎、降本增效、焕然一新、里程碑式、显著提升、极大提高、至关重要、不可或缺、前所未有、全方位、多维度、精细化。若无具体事实支撑，直接删去或换成具体动作与数据。
+
+**套话过渡与开头：** 值得注意的是、需要指出的是、不可否认、显而易见、毫无疑问、总而言之、综上所述、归根结底、一言以蔽之、从某种意义上说、在当今……的背景下、随着……的快速发展、让我们一起深入了解。直接说核心判断，不要铺垫。
+
+**否定拔高与二元对立：** “不是 X，而是 Y”“不仅是 X，更是 Y”“与其说是 X，不如说是 Y”“这不仅仅关乎 X，更关乎 Y”。除非原文确实在做严格概念辨析，否则直接陈述 Y。
+
+**机械排比与对称结构：** 强行凑三个四字短语或三段式排比（“既要……又要……还要……”），每段字数与句式高度整齐，或者把本可用两句话说完的段落拆成“**小标题**：一句话解释”的模板化列表。
+
+**虚指主语与翻译腔：** “该举措实现了……的全面跃升”“这一现象深刻折射出……”“这无疑为……注入了强劲动力”。改回具体的人、团队或系统作主语，使用直接动词。
+
+**空洞升华与总结复读结尾：** “未来，……必将迎来更加广阔的发展空间”“这不仅是一次技术升级，更是……的新起点”或末段把前文重述一遍。删掉拔高句，停在最后一个具体事实、结论或下一步动作上。
 
 ## Workflow
 

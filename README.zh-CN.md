@@ -11,10 +11,12 @@
 ### Coding
 
 - [code-simplifier](Coding/code-simplifier/)：保持行为不变，简化代码。
-- [no-ai-slop](Coding/no-ai-slop/)：润色写作，减少 AI 化表达。
-- [python-docstring-standard](Coding/python-docstring-standard/)：规范 Python 文档字符串。
+- [coding-project-standards](Coding/coding-project-standards/)：在项目级 `AGENTS.md` 中维护 AI 实验与大文件存储规范。
+- [git-version-workflow](Coding/git-version-workflow/)：应用版本号提交、squash、rebase、校验与推送规范。
+- [no-ai-slop](Coding/no-ai-slop/)：润色中英文稿件，去除 AI 腔并保留个人语气。
+- [python-docstring-standard](Coding/python-docstring-standard/)：规范 Python 脚本头、类与函数文档字符串。
 - [writing-a-project-proposal](Coding/writing-a-project-proposal/)：撰写中文项目申报材料。
-- [wty-markdown-standards](Coding/wty-markdown-standards/)：规范 Markdown 文档和更新日志。
+- [wty-markdown-standards](Coding/wty-markdown-standards/)：规范简洁的 Markdown 文档、双语 README 和更新日志。
 
 ### Tools
 
@@ -99,7 +101,7 @@ cd skills
 
 ### 选项
 
-可选择 `claude`、`codex`、`opencode`、`dsh` 或 `all`。指定的工具会在第一级界面默认勾选。`--yes` / `-Yes` 跳过两级选择；未指定工具时选择全部四个。
+可选择 `claude`、`codex`、`opencode`、`dsh`、`agy` 或 `all`。指定的工具会在第一级界面默认勾选。`--yes` / `-Yes` 跳过两级选择；未指定工具时选择全部五个。
 
 | Agent | 默认 skills 目录 | 全局指令文件 | 配置覆盖变量 |
 | --- | --- | --- | --- |
@@ -107,6 +109,7 @@ cd skills
 | Codex | `~/.codex/skills` | `~/.codex/AGENTS.md` | `CODEX_HOME` |
 | OpenCode | `~/.config/opencode/skills` | `~/.config/opencode/AGENTS.md` | `XDG_CONFIG_HOME` |
 | DSH | `~/.dsh/skills` | `~/.dsh/AGENTS.md` | `DSH_HOME` |
+| Antigravity (`agy`) | `~/.gemini/config/skills` | `~/.gemini/config/AGENTS.md` | `AGY_CONFIG_DIR` |
 
 Windows 中的 `~` 表示 `%USERPROFILE%`。设置 `SKILLS_INSTALL_HOME` 可修改默认用户目录。
 

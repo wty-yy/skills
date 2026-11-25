@@ -2,29 +2,32 @@
 
 [English Version](./docker-openclaw-README.md)
 
-这个目录包含 OpenClaw 开发环境的 Docker 镜像和启动脚本。几个文件功能如下：
+该目录包含 OpenClaw 开发环境的 Docker 镜像与启动脚本。主要文件：
 
-- `Dockerfile`：基于 `ubuntu:24.04` 构建镜像，创建与宿主机同 UID/GID 的普通用户，按 `nvm` 方式安装 Node.js 24，并安装 `openclaw` 和 `pm2`
-- `run.sh`：辅助脚本，支持 build / up / shell / stop / rm / rmi / logs，自动挂载容器home目录到`./openclaw-data`下
+- `Dockerfile`：基于 `ubuntu:24.04` 构建镜像，创建与宿主机同 UID/GID 的普通用户，通过 `nvm` 安装 Node.js 24，并安装 `openclaw` 和 `pm2`
+- `run.sh`：辅助脚本，支持 `build` / `up` / `shell` / `stop` / `rm` / `rmi` / `logs`，并将容器 home 目录挂载至 `./openclaw-data`
 
-额外功能：
-- 修复`openclaw`中无法链接代理问题
-- Dockerfile安装支持自动代理识别，如果宿主机设置了`HTTP_PROXY`/`HTTPS_PROXY`环境变量，build中会自动找到宿主机的代理设置并配置到镜像里
-- 地区时间`TZ`识别
+额外特性：
+
+- 修复 `openclaw` 代理连接问题
+- 构建镜像时自动检测宿主机 `HTTP_PROXY` / `HTTPS_PROXY` 环境变量并写入镜像代理配置
+- 自动检测宿主机 `TZ` 时区设置
 
 脚本：
-- 支持直接将`codex`, `gemini`的`oauth.json`转为openclaw的凭证更新到`auth-profiles.json`内（见[自动配置凭证](#自动配置凭证)）
 
-当前脚本构建结果默认使用：
+- 支持将 `codex`、`gemini` 凭证导入 OpenClaw 的 `auth-profiles.json`（见[自动配置凭证](#自动配置凭证)）
+
+默认构建结果：
 
 - 镜像名：`wtyyy/openclaw:latest`
 - 容器名：`openclaw`
-- 容器内用户名：默认固定为 `user`
-- 容器内 UID/GID：默认取宿主机当前 `id -u` / `id -g`
+- 容器内用户名：固定为 `user`
+- 容器内 UID/GID：当前宿主机 `id -u` / `id -g`
 
-目录如下：
+目录：
+
 - [构建/启动容器](#构建启动容器)
-- [管理openclaw](#管理openclaw)
+- [管理 OpenClaw](#管理-openclaw)
 - [自动配置凭证](#自动配置凭证)
 - [其他细节](#其他细节)
 
@@ -36,7 +39,7 @@ cd slay-the-spire2-ai
 ./docker-openclaw/run.sh
 # 仅构建镜像
 ./docker-openclaw/run.sh build
-# 进入正在运行的容器
+# 进入运行中的容器
 ./docker-openclaw/run.sh shell
 # 停止容器
 ./docker-openclaw/run.sh stop
@@ -48,47 +51,52 @@ cd slay-the-spire2-ai
 ./docker-openclaw/run.sh logs
 ```
 
-使用完成后，删除容器数据也会保存在本地，因为容器内的 `/home/${HOST_USER}` 是挂载的 `${PROJECT_DIR}/openclaw-data`，你可以在宿主机这个目录里看到数据。
+容器内 `/home/${HOST_USER}` 挂载到 `${PROJECT_DIR}/openclaw-data`，删除容器后数据仍保留在宿主机该目录中。
 
-## 管理openclaw
+## 管理 OpenClaw
 
-openclaw依赖后端启动的`openclaw-gateway`，我们用pm2来管理这个进程，确保它在容器里一直运行，并且如果崩溃了能自动重启。
+OpenClaw 依赖后台进程 `openclaw-gateway`，由 `pm2` 托管并在异常退出时自动重启。
 
-这里给出一些openclaw常用命令，可以直接使用
+常用 OpenClaw 命令：
+
 ```bash
-openclaw configure  # 配置通讯，Model, Gateway Port等
-openclaw tui        # 启动TUI界面，可以在里面查看连接的客户端，日志等
-openclaw dashboard  # 启动Dashboard界面
+openclaw configure  # 配置通讯、模型、网关端口等
+openclaw tui        # 启动 TUI 界面，查看客户端、日志与连接状态
+openclaw dashboard  # 启动 Dashboard 界面
 ```
 
-pm2管理openclaw-gateway这个进程，一些常用命令如下：
+常用 `pm2` 管理命令：
 
 ```bash
-# 查看日志，连接信息和错误都会输出在日志里
+# 查看日志（包含连接详情与报错）
 pm2 logs openclaw-gateway
 # 查看状态
 pm2 status
-# 重启
+# 重启网关
 pm2 restart openclaw-gateway
-# 停止
+# 停止网关
 pm2 stop openclaw-gateway
 ```
 
 ## 自动配置凭证
-如果宿主机安装过`codex, gemini`，并已登陆，执行
+
+若宿主机已安装并登录 `codex` 或 `gemini`，执行：
+
 ```bash
 cd slay-the-spire2-ai
-# codex凭证安装到容器
+# 导入 Codex 凭证到容器
 node docker-openclaw/tools/import-codex-auth.js ~/.codex/auth.json ./openclaw-data/.openclaw/agents/main/agent/auth-profiles.json
-# gemini凭证安装到容器
+# 导入 Gemini 凭证到容器
 node docker-openclaw/tools/import-gemini-auth.js ~/.gemini/oauth_creds.json ./openclaw-data/.openclaw/agents/main/agent/auth-profiles.json
 ```
-安装完成后需执行`pm2 restart openclaw-gateway`重启网关让它加载新的凭证。
+
+导入完成后执行 `pm2 restart openclaw-gateway` 使网关重新加载凭证。
 
 ## 其他细节
+
 ### 容器运行参数
 
-脚本默认会带上这些运行参数
+该脚本默认附带以下运行参数：
 
 - `--gpus all`
 - `--privileged`
@@ -98,19 +106,19 @@ node docker-openclaw/tools/import-gemini-auth.js ~/.gemini/oauth_creds.json ./op
 - `--net=host`
 - `--ipc=host`
 - 项目目录挂载：`${PROJECT_DIR}:/workspace`
-- Home 挂载：`${PROJECT_DIR}/openclaw-data:/home/${HOST_USER}`
+- Home 目录挂载：`${PROJECT_DIR}/openclaw-data:/home/${HOST_USER}`
 
-### 镜像里安装了什么
+### 镜像内容
 
-镜像会安装：
+镜像默认安装与配置：
 
 - 通过 `nvm` 安装的 Node.js 24
-- npm
+- `npm`
 - `openclaw`
 - `pm2`
-- 构建阶段执行过的 `openclaw setup`
+- 构建阶段执行的 `openclaw setup`
 - 自动启动的 `openclaw-gateway`
 - 与宿主机同 UID/GID 的普通用户
-- 可直接使用的免密码 `sudo`
-- 启动时自动补齐到挂载 home 的默认模板：`nvm`、`zsh/p10k`、`vim`、OpenClaw 相关文件
+- 免密码 `sudo`
+- 启动时同步挂载 home 模板：`nvm`、`zsh/p10k`、`vim` 及 OpenClaw 相关文件
 - 常用工具：`curl`、`git`、`sudo`、`vim`、`zsh`、`powerlevel10k`、`zsh-autosuggestions`、`zsh-syntax-highlighting`、`gruvbox`

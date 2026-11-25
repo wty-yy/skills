@@ -2,7 +2,7 @@
 
 Use this template for a new public or project-facing bilingual README when the title style is unspecified or the user requests a centered title section.
 
-Keep YAML frontmatter before the header. Replace every `{{PLACEHOLDER}}`. Do not add a second Markdown `#` heading below this block.
+Keep any existing YAML frontmatter before the header. Replace every `{{PLACEHOLDER}}`. Do not add a second Markdown `#` heading below this block.
 
 ## `README.md`
 

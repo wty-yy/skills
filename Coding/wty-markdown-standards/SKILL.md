@@ -1,163 +1,64 @@
 ---
 name: wty-markdown-standards
-description: Write and normalize concise Markdown documentation and changelogs in the user's preferred style, keep bilingual README files synchronized when requested, and apply the user's commit, rebase, and push conventions when requested.
+description: Write and normalize concise Markdown documentation and changelogs in the user's preferred style, and keep bilingual README files (`README.md` and `README.zh-CN.md`) synchronized when requested.
 ---
 
 # WTY Markdown Standards
 
-## Documentation Scope
+## Scope
 
 - Modify README files or `AGENTS.md` only when the user explicitly requests edits to those files; code changes alone do not authorize documentation updates.
-- Include algorithm and environment implementation details in README files or `AGENTS.md` only when the user explicitly requests those details.
+- Include algorithm or environment implementation details in README files or `AGENTS.md` only when explicitly requested.
+- For Git commit, squash, rebase, and push rules (including versioned release commits), use `git-version-workflow`.
 
-## Output Style
+## Style and Content Selection
 
-- Prefer short, direct wording
-- Prefer noun phrases and concise statements over conversational phrasing
-- Use headings in a simple sequence:
-  - short introduction
-  - usage
-  - implementation details or other details
-- Put explanations for commands inside code blocks as shell comments when possible
-- Keep prose compact; avoid long paragraphs
-- Do not wrap Markdown prose to a fixed column width. Keep each sentence or paragraph on one continuous line; insert line breaks only when required by Markdown structure such as headings, lists, tables, blockquotes, code fences, or paragraph separation
-- Prefer `该工具` / `该脚本` over conversational phrases like `这个工具`
-- Avoid filler such as `最简单的...` unless the user explicitly asks for it
-- Do not add background, motivation, design history, or validation details unless they are required to use or verify the documented interface
-- Preserve project identifiers, task names, paths, parameter names, numeric values, and units exactly
-- Prefer one fact or action per sentence; combine items only when they form one inseparable change
+- Prefer short, direct wording, noun phrases, and compact paragraphs over conversational phrasing or marketing language.
+- Prefer one fact or action per sentence; combine items only when they form one inseparable change.
+- Do not wrap Markdown prose to a fixed column width. Keep each sentence or paragraph on one continuous line; insert line breaks only where Markdown structure requires them (headings, lists, tables, blockquotes, code fences, paragraph breaks).
+- In Chinese docs, prefer `该工具` / `该脚本` / `该目录` over conversational phrases like `这个工具` / `这个目录`; avoid filler such as `最简单的...` unless requested.
+- Include stable facts needed to build, run, configure, or understand the interface. Inspect nearby code and scripts before drafting when repository facts are unclear; prefer filling missing operational details over inventing product-level claims.
+- Preserve project identifiers, task names, paths, parameter names, numeric values, and units verbatim.
+- Keep commands runnable and place short explanations inside code blocks as shell comments when possible.
+- Omit background, motivation, design history, rejected alternatives, prompt-negotiation history, negative compliance statements (unless they are operational constraints users must know), and sentences whose only purpose is to reassure the user that the prompt was followed.
+- Keep skill instructions reusable across projects; store repo-specific task names, paths, and experiment policies in project guidelines.
+
+## README Structure
+
+- General READMEs: short intro → feature summary or file list → defaults (if relevant) → table of contents (only when genuinely long) → usage → implementation details → other details.
+- Tool READMEs: short intro → usage → implementation details → other details.
+
+## Bilingual READMEs
+
+- Default to maintaining both `README.zh-CN.md` and `README.md` unless the user limits scope to one language.
+- Source-of-truth priority: existing Chinese README → existing English README → nearby scripts, package manifests, and docs.
+- Mirror the Chinese structure first when producing bilingual output, then align the English README section by section. If both files exist and have drifted, resynchronize section order and coverage before polishing wording.
+- Add cross-links near the top (`README.zh-CN.md` links to `README.md` and vice versa).
+- Translate meaning rather than wording literally, keeping the concise tone and ensuring both files list the same commands, paths, defaults, and constraints.
+- Style baseline references (read when needed):
+  - `references/docker-openclaw-README.zh-CN.md` (Chinese structure and tone)
+  - `references/docker-openclaw-README.md` (English phrasing and section alignment)
+
+### Centered Bilingual Header
+
+For a new public or project-facing bilingual README, use [references/centered-bilingual-readme-header.md](references/centered-bilingual-readme-header.md) when the title style is unspecified or the user asks to restyle it. Preserve an established title style unless restyling is requested.
+
+- Keep any existing YAML frontmatter before the centered HTML header.
+- Include the project title, one compact summary, and links to both languages (`<strong>` for the current language, `<a>` for the other).
+- Keep title, summary, links, and language order equivalent across `README.md` and `README.zh-CN.md`, and replace every placeholder.
 
 ## Concise Changelog Style
 
-Use this style when the source or target is a `CHANGELOG`, release note, commit summary, or version history. Keep changelogs very short: retain only the changes and values needed to identify each version.
+Apply when creating or normalizing a `CHANGELOG`, release note, or version history:
 
-Rules:
-
-- Put versions in descending semantic-version order: the newest version must be at the top and older versions must follow, with one simple heading per version, for example `## v6 - 2026-08-16`.
+- Order version headings by semantic version descending (newest at the top), using one heading per version (for example, `## v6 - 2026-08-16`) with the date as secondary context. Merge multiple changes sharing a version under the same heading instead of creating duplicate headings.
 - Use a flat numbered list under each version; avoid nested bullets and long subsections.
-- Record the change directly: affected component + action + necessary parameter or interface. Omit rationale unless it changes how the result should be used.
-- Keep each item to one compact sentence or line when possible. Group only tightly coupled edits.
-- For numbered changelog entries, do not append a terminal period; use internal punctuation only when needed for readability.
-- Use concise English imperative wording by default, such as `Add ...`, `Change ...`, `Remove ...`, `Update ...`; use Chinese changelog entries only when explicitly requested.
-- Keep code identifiers and values inline with backticks, including task IDs, function names, paths, ranges, dimensions, and units.
-- Omit equations, implementation walkthroughs, training stages or procedures, experiment outcomes, metrics, checkpoint selection, validation narratives, and repeated explanations of the same interface.
-- Keep configuration and algorithm changes brief, with only necessary values. Store detailed experiments, exploratory versions, and debugging records in separate project documentation at the location established by the user or repository.
-- Preserve the existing language and numbering convention of the target changelog. Do not introduce bilingual sections unless explicitly requested.
-- When the user explicitly requests version consolidation, retain only the requested version headings, move useful experiment history to separate project documentation, and remove redundant code for superseded versions after checking callers. Do not discard version history during ordinary changelog edits.
+- Keep each entry to one compact technical sentence without a terminal period (use internal punctuation only when needed for readability). Group only tightly coupled edits.
+- Write entries in concise English imperative wording by default (`Add ...`, `Change ...`, `Remove ...`, `Update ...`); preserve an existing target changelog's language and numbering convention unless requested otherwise, and do not introduce bilingual sections unless asked.
+- Record only: (1) what changed, (2) affected component or task, and (3) parameters, interfaces, compatibility, or behavior needed to identify the change. Wrap identifiers, paths, ranges, dimensions, and units in backticks.
+- Omit rationale, equations, implementation walkthroughs, training procedures, metrics, checkpoint selection, validation narratives, and repeated explanations. Store detailed experiments and debugging records in separate project docs.
+- Version consolidation (only when explicitly requested): retain only requested version headings, move useful experiment history to separate project docs, and remove redundant superseded code after checking callers. Never discard version history during ordinary changelog edits.
 
-When converting a verbose change description into this format, retain only:
+## Output
 
-1. What changed.
-2. Where or which task it affects.
-3. The parameter, interface, compatibility, or behavior needed to identify the change.
-
-Drop motivation, alternatives, chronology, and low-level implementation details unless the user explicitly asks for them.
-
-## Markdown and Git Workflow
-
-Apply these rules when the user asks to normalize changelogs and commit the current changes:
-
-- Write all `CHANGELOG` entries in English unless the user explicitly requests another language.
-- Sort version headings by semantic version in descending order; put the newest version first and use the date only as secondary context.
-- Use one heading per version. If several changes share a version, merge them under the same heading and continue the numbered list instead of creating duplicate headings.
-- Keep the newest version at the top, followed by older versions; keep each entry as one compact technical sentence.
-- Preserve identifiers, parameters, paths, dimensions, numeric values, and units in backticks where appropriate.
-- Before committing, inspect `git status`, the current branch, the remote, and recent history; include the current intended changes without overwriting unrelated user edits.
-- If the commit defines a version, use only `v<version>` as the commit message, optionally followed by a component version with `+`, for example `v1.1` or `v1.1+component1.1`.
-- Do not append action descriptions, semicolons, or colons to a versioned commit message; use the `+<component><version>` suffix for component versions.
-- If the user explicitly requests a squash from a specified base commit, preserve that base and replace only the requested following commits with one commit using the requested version message.
-- Before pushing, fetch or otherwise inspect the current `origin/<branch>` and rebase the local commit onto the latest remote branch.
-- Resolve rebase conflicts by preserving both the remote changes and the local requested changes; re-check version ordering and duplicate headings after conflict resolution.
-- Run `git diff --check` and relevant syntax or focused tests before pushing. Confirm the working tree and branch tracking state afterward.
-- Use a normal push when history is unchanged. If the requested rebase rewrites a commit already pushed to the same branch, use `git push --force-with-lease`, never an unconditional `--force`.
-- If a push is blocked only because the local Git LFS hook cannot run, report it and bypass the hook with `--no-verify` only after confirming that the commit does not add or modify LFS assets.
-
-## Content Selection
-
-- Keep skill instructions reusable across projects. Store repository-specific task names, paths, output filenames, versions, and experiment policies in repository guidelines or user-provided context.
-- Treat emphasis in the prompt as implementation guidance, not automatic README content
-- Include stable facts needed to build, run, configure, or understand the project interface
-- Omit rejected alternatives, prior behavior, correction history, and implementation negotiation
-- Avoid negative compliance statements unless the negative behavior is an operational constraint users must know
-- Prefer showing the current command, path, or behavior instead of explaining what is not generated or supported
-- Before finishing, remove sentences whose only purpose is to reassure the user that the prompt was followed
-
-## Bilingual Requirements
-
-When generating README files for this user:
-
-- Default to producing both `README.zh-CN.md` and `README.md` unless the user limits scope
-- Treat `README.zh-CN.md` and `README.md` as the standard bilingual filenames for this user's projects
-- If only one language exists, treat it as the source of truth unless the user says otherwise
-- If Chinese and English README files both exist but have drifted, resynchronize section order and coverage before polishing wording
-- Add cross-links near the top:
-  - Chinese README should link to `README.md`
-  - English README should link to `README.zh-CN.md`
-- Keep section order aligned across both languages
-- Translate meaning, not wording literally; preserve the concise tone
-- If the user asks for Chinese-only or English-only output, follow that scope and skip the missing language
-
-## Centered Bilingual README Header
-
-For a new public or project-facing bilingual README, use the [centered bilingual header template](references/centered-bilingual-readme-header.md) when the title style is unspecified or the user asks to restyle it.
-
-- Keep YAML frontmatter before the centered HTML header.
-- Include the project title, one compact repository summary, and links to both README languages.
-- Emphasize the current language with `<strong>` and render the other language as a link.
-- Keep the title, summary, links, and language order equivalent in `README.md` and `README.zh-CN.md`.
-- Preserve an established title style unless the user requests this header format.
-
-## Workflow
-
-1. Inspect the current README files and the surrounding scripts or package files
-2. Determine the source material:
-   - existing Chinese README if present
-   - otherwise existing English README
-   - otherwise nearby scripts, package manifests, and docs
-3. Mirror the user's Chinese structure first when bilingual output is required
-4. Generate or update the paired English README to match the Chinese version section-by-section
-5. Keep examples runnable and keep explanations inside code blocks as shell comments when possible
-6. Separate durable project documentation from transient prompt rationale and discarded approaches
-7. Before finishing, check that both languages mention the same commands, paths, defaults, and constraints
-8. If a style baseline is needed:
-   - read `references/docker-openclaw-README.zh-CN.md` for Chinese structure and tone
-   - read `references/docker-openclaw-README.md` for matching English phrasing and section alignment
-   - follow their section order and information flow:
-     - short intro
-     - concrete file or feature summary
-     - usage commands
-     - implementation or operational details
-     - compact extra notes
-9. For a new or restyled centered bilingual title, read [references/centered-bilingual-readme-header.md](references/centered-bilingual-readme-header.md) and replace every placeholder.
-
-## Structure Guidance
-
-Prefer structures like:
-
-- intro
-- feature summary or file list
-- defaults if relevant
-- table of contents only when the document is genuinely long
-- usage
-- implementation details
-- other details
-
-For tool READMEs, prefer:
-
-- intro
-- usage
-- implementation details
-- other details
-
-## Editing Guidance
-
-- Use `README.zh-CN.md` and `README.md` unless the user explicitly limits scope to a single language
-- Preserve project-specific commands and paths
-- Do not add extra marketing language
-- Do not restate prompt corrections or rejected implementation choices as project documentation
-- Keep code examples short and annotated with shell comments
-- For README prose, prefer compact paragraphs and short lists; for changelogs, use the flat numbered format above instead of README-style explanations
-- If Chinese and English READMEs already exist, keep them synchronized
-- If repository facts are unclear, inspect code and scripts before drafting text
-- Prefer filling obvious missing operational details over inventing product-level claims
-- In the final response, state which README files were created or updated and whether bilingual sync was preserved
+In the final response, state which Markdown files were created or updated and whether bilingual synchronization was preserved.

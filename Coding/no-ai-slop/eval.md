@@ -33,6 +33,7 @@ For detect requests, make sure the response names each pattern found with a quot
 7. Is formatting slop removed: Emoji headings, decorative bold, bullets that should be prose, headers over tiny sections?
 8. Are colons sentence case unless grammar, a proper noun, a title, or code requires otherwise?
 9. Are em dashes used sparingly: Usually none in short copy, and only 1-2 in longer drafts when they clearly help?
+10. For Chinese drafts, are Chinese AI buzzwords (赋能、抓手、闭环、底层逻辑、显著提升等), boilerplate transitions (值得注意的是、综上所述、随着……的快速发展), forced binary contrasts (不是……而是……/不仅……更是……), mechanical parallel lists, and hollow uplifting endings removed?
 
 ## Final read
 

@@ -1,4 +1,0 @@
-interface:
-  display_name: "Coding Project Standards"
-  short_description: "Maintain AGENTS.md experiment and data standards in English"
-  default_prompt: "Use $coding-project-standards to check my project-level AGENTS.md for existing experiment and data storage rules, flag overlaps for review, and add the standards in English if none exist."

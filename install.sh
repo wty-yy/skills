@@ -19,7 +19,7 @@ print_message() {
 usage() {
     if [[ "$ui_language" == zh ]]; then
         cat <<'EOF'
-用法：./install.sh <-i|--install|-r|--remove> [claude|codex|opencode|dsh|all ...] [--yes] [--global-instructions]
+用法：./install.sh <-i|--install|-r|--remove> [claude|codex|opencode|dsh|agy|all ...] [--yes] [--global-instructions]
 
   -i, --install  安装
   -r, --remove   卸载
@@ -53,12 +53,14 @@ usage() {
   codex     ~/.codex/skills
   opencode  ~/.config/opencode/skills
   dsh       ~/.dsh/skills
+  agy       ~/.gemini/config/skills
 
 全局指令文件（链接到本仓库 AGENTS.md）：
   claude    ~/.claude/CLAUDE.md
   codex     ~/.codex/AGENTS.md
   opencode  ~/.config/opencode/AGENTS.md
   dsh       ~/.dsh/AGENTS.md
+  agy       ~/.gemini/config/AGENTS.md
 
 环境变量：
   SKILLS_INSTALL_HOME  自定义默认安装路径所用的用户目录。
@@ -66,6 +68,7 @@ usage() {
   CODEX_HOME          自定义 Codex 配置目录。
   XDG_CONFIG_HOME     自定义 OpenCode 所用的配置根目录。
   DSH_HOME            自定义 DSH 的配置目录。
+  AGY_CONFIG_DIR      自定义 Antigravity (agy) 的配置目录。
 
 语言按 LC_ALL、LC_MESSAGES、LANG 的优先级自动选择。
 中文环境显示中文；其他环境或未设置语言时显示英文。
@@ -75,7 +78,7 @@ usage() {
 EOF
     else
         cat <<'EOF'
-Usage: ./install.sh <-i|--install|-r|--remove> [claude|codex|opencode|dsh|all ...] [--yes] [--global-instructions]
+Usage: ./install.sh <-i|--install|-r|--remove> [claude|codex|opencode|dsh|agy|all ...] [--yes] [--global-instructions]
 
   -i, --install  Install
   -r, --remove   Uninstall
@@ -92,7 +95,7 @@ Press Space to toggle a skill and Enter to install selected skills and remove
 deselected repository links. Press q or Escape to cancel without applying.
 --remove lists installed repository links, initially unchecked; only checked
 links are removed. --yes skips both checklists and processes all skills for the
-named tools, or all four tools when no agent is specified.
+named tools, or all five tools when no agent is specified.
 The checklist includes global instructions; selecting replaces the existing file
 with a symlink. Use --global-instructions to preselect it, or combine with --yes
 to install the link directly. On install, --yes alone leaves global instructions unchanged.
@@ -113,12 +116,14 @@ Default destinations:
   codex     ~/.codex/skills
   opencode  ~/.config/opencode/skills
   dsh       ~/.dsh/skills
+  agy       ~/.gemini/config/skills
 
 Global instructions (symlinks to this repository's AGENTS.md):
   claude    ~/.claude/CLAUDE.md
   codex     ~/.codex/AGENTS.md
   opencode  ~/.config/opencode/AGENTS.md
   dsh       ~/.dsh/AGENTS.md
+  agy       ~/.gemini/config/AGENTS.md
 
 Environment:
   SKILLS_INSTALL_HOME  Override the home directory for default destinations.
@@ -126,6 +131,7 @@ Environment:
   CODEX_HOME          Override Codex's configuration directory.
   XDG_CONFIG_HOME     Override the configuration root used by OpenCode.
   DSH_HOME            Override DSH's configuration directory.
+  AGY_CONFIG_DIR      Override Antigravity's (agy) configuration directory.
 
 Language follows LC_ALL, LC_MESSAGES, then LANG. Chinese locales use Chinese;
 other or unset locales use English.
@@ -150,6 +156,7 @@ skills_dir() {
         codex) printf '%s/skills\n' "${CODEX_HOME:-$install_home/.codex}" ;;
         opencode) printf '%s/opencode/skills\n' "${XDG_CONFIG_HOME:-$install_home/.config}" ;;
         dsh) printf '%s/skills\n' "${DSH_HOME:-$install_home/.dsh}" ;;
+        agy) printf '%s/skills\n' "${AGY_CONFIG_DIR:-$install_home/.gemini/config}" ;;
     esac
 }
 
@@ -558,13 +565,13 @@ choose_skills() {
 
 choose_agents() {
     local index agent
-    items=("$repo_root/claude" "$repo_root/codex" "$repo_root/opencode" "$repo_root/dsh")
-    selected=(0 0 0 0)
-    statuses=(available available available available)
-    tree_items=(0 1 2 3)
-    tree_categories=('' '' '' '')
-    tree_last_children=(0 0 0 0)
-    item_categories=('' '' '' '')
+    items=("$repo_root/claude" "$repo_root/codex" "$repo_root/opencode" "$repo_root/dsh" "$repo_root/agy")
+    selected=(0 0 0 0 0)
+    statuses=(available available available available available)
+    tree_items=(0 1 2 3 4)
+    tree_categories=('' '' '' '' '')
+    tree_last_children=(0 0 0 0 0)
+    item_categories=('' '' '' '' '')
     for index in "${!items[@]}"; do
         for agent in ${agents[@]+"${agents[@]}"}; do
             [[ "${items[index]##*/}" != "$agent" ]] || selected[index]=1
@@ -590,19 +597,19 @@ non_interactive=false
 global_instructions=false
 for agent in "$@"; do
     case "$agent" in
-        all) agents+=(claude codex opencode dsh) ;;
-        claude|codex|opencode|dsh) agents+=("$agent") ;;
+        all) agents+=(claude codex opencode dsh agy) ;;
+        claude|codex|opencode|dsh|agy) agents+=("$agent") ;;
         -y|--yes) non_interactive=true ;;
         --global-instructions) global_instructions=true ;;
         -h|--help) usage; exit 0 ;;
-        *) die 'Unknown agent: %s (supported: claude, codex, opencode, dsh, all)' '未知 agent：%s（支持 claude、codex、opencode、dsh、all）' "$agent" ;;
+        *) die 'Unknown agent: %s (supported: claude, codex, opencode, dsh, agy, all)' '未知 agent：%s（支持 claude、codex、opencode、dsh、agy、all）' "$agent" ;;
     esac
 done
 if [[ "$action" == uninstall && "$global_instructions" == true ]]; then
     die '--global-instructions requires --install; --remove already removes owned instruction links.' '--global-instructions 仅用于 --install；--remove 会自动移除本仓库的指令链接。'
 fi
 if [[ "$non_interactive" == true && ${#agents[@]} -eq 0 ]]; then
-    agents=(claude codex opencode dsh)
+    agents=(claude codex opencode dsh agy)
 fi
 if [[ "$non_interactive" == false ]]; then
     [[ -t 0 && -t 1 ]] || die 'Interactive selection requires a terminal. Use --yes to skip both checklists.' '交互选择需要终端。使用 --yes 跳过工具和技能选择。'

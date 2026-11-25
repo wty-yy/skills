@@ -11,10 +11,12 @@ Categories follow `<category>/<skill>/SKILL.md`; the installers discover them au
 ### Coding
 
 - [code-simplifier](Coding/code-simplifier/): simplify code without changing behavior.
-- [no-ai-slop](Coding/no-ai-slop/): edit writing to remove AI patterns.
-- [python-docstring-standard](Coding/python-docstring-standard/): standardize Python docstrings.
+- [coding-project-standards](Coding/coding-project-standards/): maintain project-level `AGENTS.md` rules for AI experiments and bulk data storage.
+- [git-version-workflow](Coding/git-version-workflow/): apply versioned commit, squash, rebase, verification, and push conventions.
+- [no-ai-slop](Coding/no-ai-slop/): edit English or Chinese drafts to remove AI patterns while preserving personal voice.
+- [python-docstring-standard](Coding/python-docstring-standard/): standardize Python script headers, class docstrings, and function docstrings.
 - [writing-a-project-proposal](Coding/writing-a-project-proposal/): draft Chinese project proposals.
-- [wty-markdown-standards](Coding/wty-markdown-standards/): format Markdown documentation and changelogs.
+- [wty-markdown-standards](Coding/wty-markdown-standards/): format concise Markdown documentation, bilingual READMEs, and changelogs.
 
 ### Tools
 
@@ -99,7 +101,7 @@ Enter a number to toggle an AI tool, skill, or category, Enter to continue or ap
 
 ### Options
 
-Choose `claude`, `codex`, `opencode`, `dsh`, or `all`. Named tools are preselected in the first checklist. `--yes` / `-Yes` skips both checklists; without a tool argument it selects all four.
+Choose `claude`, `codex`, `opencode`, `dsh`, `agy`, or `all`. Named tools are preselected in the first checklist. `--yes` / `-Yes` skips both checklists; without a tool argument it selects all five.
 
 | Agent | Default skills directory | Global instructions | Configuration override |
 | --- | --- | --- | --- |
@@ -107,6 +109,7 @@ Choose `claude`, `codex`, `opencode`, `dsh`, or `all`. Named tools are preselect
 | Codex | `~/.codex/skills` | `~/.codex/AGENTS.md` | `CODEX_HOME` |
 | OpenCode | `~/.config/opencode/skills` | `~/.config/opencode/AGENTS.md` | `XDG_CONFIG_HOME` |
 | DSH | `~/.dsh/skills` | `~/.dsh/AGENTS.md` | `DSH_HOME` |
+| Antigravity (`agy`) | `~/.gemini/config/skills` | `~/.gemini/config/AGENTS.md` | `AGY_CONFIG_DIR` |
 
 On Windows, `~` means `%USERPROFILE%`. Set `SKILLS_INSTALL_HOME` to change the default home directory.
 

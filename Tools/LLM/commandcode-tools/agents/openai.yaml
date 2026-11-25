@@ -1,4 +1,0 @@
-interface:
-  display_name: "Command Code Tools"
-  short_description: "Check billing usage, publish reports, or configure opencode."
-  default_prompt: "Use $commandcode-tools to check my current Command Code billing-period usage, publish the dashboard, or configure the GOAT provider in opencode."

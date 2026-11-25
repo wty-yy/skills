@@ -8,7 +8,7 @@ trap 'rm -rf -- "$test_root"' EXIT
 
 test_repo="$test_root/repository with spaces"
 export SKILLS_INSTALL_HOME="$test_root/profile with spaces"
-unset CLAUDE_CONFIG_DIR CODEX_HOME XDG_CONFIG_HOME DSH_HOME
+unset CLAUDE_CONFIG_DIR CODEX_HOME XDG_CONFIG_HOME DSH_HOME AGY_CONFIG_DIR
 mkdir -p -- "$test_repo/Coding/demo skill" "$SKILLS_INSTALL_HOME/.codex"
 cp -- "$repo_root/install.sh" "$repo_root/AGENTS.md" "$test_repo/"
 printf 'fixture\n' > "$test_repo/Coding/demo skill/SKILL.md"
@@ -16,7 +16,7 @@ printf 'original\n' > "$SKILLS_INSTALL_HOME/.codex/AGENTS.md"
 
 # A fresh installation starts with an empty discovery array.
 "$test_bash" "$test_repo/install.sh" -i all --yes --global-instructions > /dev/null
-for config in .claude .codex .config/opencode .dsh; do
+for config in .claude .codex .config/opencode .dsh .gemini/config; do
     destination="$SKILLS_INSTALL_HOME/$config"
     name=AGENTS.md
     [[ "$config" != .claude ]] || name=CLAUDE.md
@@ -25,7 +25,7 @@ for config in .claude .codex .config/opencode .dsh; do
 done
 
 "$test_bash" "$test_repo/install.sh" --remove --yes > /dev/null
-for config in .claude .codex .config/opencode .dsh; do
+for config in .claude .codex .config/opencode .dsh .gemini/config; do
     destination="$SKILLS_INSTALL_HOME/$config"
     name=AGENTS.md
     [[ "$config" != .claude ]] || name=CLAUDE.md
@@ -40,7 +40,7 @@ for name in commandcode-tools dsh-tools opencode-tools token-usage; do
 done
 mkdir -p -- "$test_repo/Tools/Downloader/wechat-get-data"
 printf 'fixture\n' > "$test_repo/Tools/Downloader/wechat-get-data/SKILL.md"
-for config in .claude .codex .config/opencode .dsh; do
+for config in .claude .codex .config/opencode .dsh .gemini/config; do
     destination="$SKILLS_INSTALL_HOME/$config/skills"
     mkdir -p -- "$destination"
     for name in commandcode-tools dsh-tools check-opencode-usage token_usage wechat_get_data; do
@@ -48,7 +48,7 @@ for config in .claude .codex .config/opencode .dsh; do
     done
 done
 "$test_bash" "$test_repo/install.sh" -i all --yes > /dev/null
-for config in .claude .codex .config/opencode .dsh; do
+for config in .claude .codex .config/opencode .dsh .gemini/config; do
     destination="$SKILLS_INSTALL_HOME/$config/skills"
     for name in commandcode-tools dsh-tools opencode-tools token-usage; do
         [[ "$destination/$name" -ef "$test_repo/Tools/LLM/$name" ]]
@@ -60,7 +60,7 @@ for config in .claude .codex .config/opencode .dsh; do
     ln -s -- "$test_repo/Tools/token_usage" "$destination/token_usage"
 done
 "$test_bash" "$test_repo/install.sh" -i all --yes > /dev/null
-for config in .claude .codex .config/opencode .dsh; do
+for config in .claude .codex .config/opencode .dsh .gemini/config; do
     [[ ! -L "$SKILLS_INSTALL_HOME/$config/skills/token_usage" ]]
 done
 
@@ -90,6 +90,14 @@ DSH_HOME="$test_root/custom dsh home" "$test_bash" "$test_repo/install.sh" -r ds
 [[ ! -L "$test_root/custom dsh home/skills/token-usage" ]]
 [[ ! -L "$test_root/custom dsh home/AGENTS.md" ]]
 
+# An explicit AGY target honors AGY_CONFIG_DIR for skills and global instructions.
+AGY_CONFIG_DIR="$test_root/custom agy config" "$test_bash" "$test_repo/install.sh" -i agy --yes --global-instructions > /dev/null
+[[ "$test_root/custom agy config/skills/token-usage" -ef "$test_repo/Tools/LLM/token-usage" ]]
+[[ "$test_root/custom agy config/AGENTS.md" -ef "$test_repo/AGENTS.md" ]]
+AGY_CONFIG_DIR="$test_root/custom agy config" "$test_bash" "$test_repo/install.sh" -r agy --yes > /dev/null
+[[ ! -L "$test_root/custom agy config/skills/token-usage" ]]
+[[ ! -L "$test_root/custom agy config/AGENTS.md" ]]
+
 # An instructions-only checkout has no skills; flags default to all agents.
 rm -rf -- "$test_repo/Coding" "$test_repo/Tools"
 "$test_bash" "$test_repo/install.sh" --install --yes --global-instructions > /dev/null
@@ -97,6 +105,7 @@ rm -rf -- "$test_repo/Coding" "$test_repo/Tools"
 [[ "$SKILLS_INSTALL_HOME/.codex/AGENTS.md" -ef "$test_repo/AGENTS.md" ]]
 [[ "$SKILLS_INSTALL_HOME/.config/opencode/AGENTS.md" -ef "$test_repo/AGENTS.md" ]]
 [[ "$SKILLS_INSTALL_HOME/.dsh/AGENTS.md" -ef "$test_repo/AGENTS.md" ]]
+[[ "$SKILLS_INSTALL_HOME/.gemini/config/AGENTS.md" -ef "$test_repo/AGENTS.md" ]]
 "$test_bash" "$test_repo/install.sh" -r all --yes > /dev/null
 [[ -f "$test_repo/AGENTS.md" ]]
 

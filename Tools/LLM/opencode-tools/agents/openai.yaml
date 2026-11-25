@@ -1,4 +1,0 @@
-interface:
-  display_name: "OpenCode Tools"
-  short_description: "Track multi-account OpenCode usage, Go quota and reports."
-  default_prompt: "Use $opencode-tools to check my OpenCode accounts' usage and Go quota, or to regenerate and publish the usage dashboard."

@@ -17,8 +17,8 @@ $ErrorActionPreference = 'Stop'
 
 function Show-Usage {
     @'
-Usage: .\install.cmd <install|uninstall> [claude|codex|opencode|dsh|all ...] [-Yes] [-GlobalInstructions]
-       .\install.ps1 <install|uninstall> [claude|codex|opencode|dsh|all ...] [-Yes] [-GlobalInstructions]
+Usage: .\install.cmd <install|uninstall> [claude|codex|opencode|dsh|agy|all ...] [-Yes] [-GlobalInstructions]
+       .\install.ps1 <install|uninstall> [claude|codex|opencode|dsh|agy|all ...] [-Yes] [-GlobalInstructions]
 
 Discover skill directories recursively and group by relative parent directory.
 Choose AI tools first, then skills for each selected tool. Named agents are
@@ -37,14 +37,16 @@ Default destinations (relative to your user profile):
   codex     .codex\skills
   opencode  .config\opencode\skills
   dsh       .dsh\skills
+  agy       .gemini\config\skills
 
 Default global instruction files:
   claude    .claude\CLAUDE.md
   codex     .codex\AGENTS.md
   opencode  .config\opencode\AGENTS.md
   dsh       .dsh\AGENTS.md
+  agy       .gemini\config\AGENTS.md
 
-Overrides: SKILLS_INSTALL_HOME, CLAUDE_CONFIG_DIR, CODEX_HOME, XDG_CONFIG_HOME, DSH_HOME.
+Overrides: SKILLS_INSTALL_HOME, CLAUDE_CONFIG_DIR, CODEX_HOME, XDG_CONFIG_HOME, DSH_HOME, AGY_CONFIG_DIR.
 Windows creates directory junctions; other platforms use symbolic links.
 Global instructions use file symlinks, which require Developer Mode or an
 elevated terminal on Windows.
@@ -96,6 +98,10 @@ function Get-SkillsDirectory([string]$Agent) {
         'opencode' {
             $config = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $installHome '.config' }
             Get-NormalPath (Join-Path $config 'opencode/skills')
+        }
+        'agy' {
+            $config = if ($env:AGY_CONFIG_DIR) { $env:AGY_CONFIG_DIR } else { Join-Path $installHome '.gemini/config' }
+            Get-NormalPath (Join-Path $config 'skills')
         }
     }
 }
@@ -350,9 +356,9 @@ try {
     $selectedAgents = @()
     foreach ($agent in $Agents) {
         switch ($agent) {
-            'all' { $selectedAgents += 'claude', 'codex', 'opencode', 'dsh' }
-            { $_ -in @('claude', 'codex', 'opencode', 'dsh') } { $selectedAgents += $agent }
-            default { throw "Unknown agent: $agent (supported: claude, codex, opencode, dsh, all)" }
+            'all' { $selectedAgents += 'claude', 'codex', 'opencode', 'dsh', 'agy' }
+            { $_ -in @('claude', 'codex', 'opencode', 'dsh', 'agy') } { $selectedAgents += $agent }
+            default { throw "Unknown agent: $agent (supported: claude, codex, opencode, dsh, agy, all)" }
         }
     }
     $selectedAgents = @($selectedAgents | Select-Object -Unique)
@@ -360,9 +366,9 @@ try {
         throw 'Interactive selection requires a terminal. Use -Yes to skip both checklists.'
     }
     if ($Yes -and $selectedAgents.Count -eq 0) {
-        $selectedAgents = @('claude', 'codex', 'opencode', 'dsh')
+        $selectedAgents = @('claude', 'codex', 'opencode', 'dsh', 'agy')
     } elseif (-not $Yes) {
-        $toolItems = @('claude', 'codex', 'opencode', 'dsh' | ForEach-Object {
+        $toolItems = @('claude', 'codex', 'opencode', 'dsh', 'agy' | ForEach-Object {
             $item = New-SelectionItem (Join-Path $repoRoot $_) ($_ -in $selectedAgents) ''
             $item.Category = ''
             $item
