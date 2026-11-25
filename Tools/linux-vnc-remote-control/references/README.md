@@ -27,7 +27,7 @@ sudo python3 auto_remote_config.py \
 
 An empty `--zt_network_id` skips ZeroTier. `--proxy` accepts a port, `host:port`, or a complete proxy URL; APT uses an environment without proxy variables.
 
-Setup generates and restarts `multivnc.service`. The first source build requires network access. A binary is reused only when its version matches and it supports both `KeyEventDelay` and `RecoverKeyMappings`; older patched builds are rebuilt.
+Setup generates and restarts `multivnc.service`. The first source build requires network access. A binary is reused only when its version matches and it supports `KeyEventDelay`, `RecoverKeyMappings`, and `UseDamage`; older patched builds are rebuilt.
 
 ### Connections
 
@@ -54,6 +54,7 @@ sudo journalctl -u multivnc.service -f
 - `auto_remote_config.py`: install dependencies, verify the source SHA-256, build TigerVNC, detect monitors, and generate the system service.
 - `tigervnc-key-event-delay.patch`: add a configurable delay after key releases.
 - `tigervnc-keymap-recovery.patch`: record temporary mapping ownership and recover slots after an instance exits unexpectedly.
+- `tigervnc-damage-polling.patch`: add the `UseDamage` switch; the launcher sets `UseDamage=0` to capture through polling.
 - `start_multivnc.sh.in`: generate the per-monitor launcher and retry exited TigerVNC and noVNC processes.
 
 Installed paths:
@@ -69,10 +70,16 @@ The default X11 display is `:1`. The launcher prefers `XAUTHORITY`, then checks 
 
 ### Verify keymap recovery
 
-Install the test dependencies `xvfb` and `python3-xlib`, then run against the newly built binary:
+Install the test dependencies `xvfb`, `python3-xlib`, and `python3-pycryptodome`, then run against the newly built binary:
 
 ```bash
 /usr/bin/python3 tests/test_keymap_recovery.py --server ~/.local/bin/x0vncserver-avnc -v
 ```
 
-Tests create a private Xvfb desktop and loopback-only test ports. They cover crash recovery, more than 19 distinct Chinese characters, live-owner protection, unregistered or modified mappings, held keys, and normal shutdown cleanup without connecting to the current desktop. Use `--xvfb /path/to/Xvfb` for a custom Xvfb path. These tests do not establish a fix for the underlying Xlib/XCB crashes.
+Tests create a private Xvfb desktop and loopback-only test ports. They cover crash recovery, more than 19 distinct Chinese characters, live-owner protection, unregistered or modified mappings, held keys, and normal shutdown cleanup without connecting to the current desktop. Use `--xvfb /path/to/Xvfb` for a custom Xvfb path. They also verify continuous framebuffer updates, pointer clicks, and Chinese input after password authentication.
+
+### XCB assertion disconnects
+
+The launcher sets `UseDamage=0` to bypass XDamage notifications, at the cost of potentially higher CPU usage from polling. This is a workaround for reports of `xcb_xlib_threads_sequence_lost`, not a fix for the underlying Xorg/libX11 issue; see [TigerVNC #869](https://github.com/TigerVNC/tigervnc/issues/869). To restore XDamage, change the launcher argument to `-UseDamage 1` and restart the service.
+
+Check process exits in the `multivnc.service` logs. An active service or successful password handshake is insufficient evidence of stability: also exercise sustained framebuffer updates and desktop interaction, and check for process restarts.

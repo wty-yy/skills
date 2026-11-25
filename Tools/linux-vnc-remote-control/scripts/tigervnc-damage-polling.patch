@@ -1,0 +1,34 @@
+--- a/unix/x0vncserver/XDesktop.cxx
++++ b/unix/x0vncserver/XDesktop.cxx
+@@ -68,6 +68,8 @@
+ core::BoolParameter
+   useShm("UseSHM", "Use MIT-SHM extension if available", true);
+ core::BoolParameter
++  useDamage("UseDamage", "Use XDamage notifications instead of polling", true);
++core::BoolParameter
+   rawKeyboard("RawKeyboard",
+               "Send keyboard events straight through and avoid "
+               "mapping them to the current keyboard layout",
+@@ -204,11 +206,11 @@
+ #ifdef HAVE_XDAMAGE
+   int xdamageErrorBase;
+ 
+-  if (XDamageQueryExtension(dpy, &xdamageEventBase, &xdamageErrorBase)) {
++  if (useDamage && XDamageQueryExtension(dpy, &xdamageEventBase, &xdamageErrorBase)) {
+     haveDamage = true;
+   } else {
+ #endif
+-    vlog.info("DAMAGE extension not present");
++    vlog.info("DAMAGE extension unavailable or disabled; using polling");
+     vlog.info("Will have to poll screen for changes");
+ #ifdef HAVE_XDAMAGE
+   }
+@@ -978,7 +980,7 @@
+ 
+     return true;
+ #ifdef HAVE_XDAMAGE
+-  } else if (ev->type == xdamageEventBase) {
++  } else if (haveDamage && ev->type == xdamageEventBase) {
+     XDamageNotifyEvent* dev;
+     core::Rect rect;
+ 

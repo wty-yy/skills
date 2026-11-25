@@ -2,7 +2,7 @@
 """Configure SSH, TigerVNC desktop sharing, noVNC, and optional ZeroTier.
 
 Overview:
-    Build TigerVNC with the bundled keyboard patches and create one shared
+    Build TigerVNC with the bundled keyboard and capture patches and create one shared
     X11 screen endpoint per monitor, managed by multivnc.service.
 
 Quick Start:
@@ -144,7 +144,7 @@ def install_missing_packages(packages, apt_env):
     run_cmd(f"apt-get install -y {' '.join(missing_packages)}", env=apt_env)
 
 class TigerVNCInstaller:
-    """Install the pinned TigerVNC server with input pacing and keymap recovery."""
+    """Install the pinned TigerVNC server with input pacing, keymap recovery, and polling control."""
 
     VERSION = "1.16.2"
     SOURCE_SHA256 = "b107c0c8b8a962594281690366c24186e95c2ea4a169acbc0076aa62ed01f467"
@@ -163,7 +163,7 @@ class TigerVNCInstaller:
         self.binary = Path(user_info.pw_dir) / ".local/bin/x0vncserver-avnc"
 
     def is_ready(self):
-        """Check whether the installed server has the pinned version and both patches."""
+        """Check the pinned version and required keyboard and capture capabilities."""
         if not self.binary.is_file() or not os.access(self.binary, os.X_OK):
             return False
         version = subprocess.run([str(self.binary), "-version"], capture_output=True, text=True)
@@ -171,7 +171,8 @@ class TigerVNCInstaller:
         return (version.returncode == 0
                 and f"version {self.VERSION}," in version.stdout + version.stderr
                 and "KeyEventDelay" in help_output.stdout + help_output.stderr
-                and "RecoverKeyMappings" in help_output.stdout + help_output.stderr)
+                and "RecoverKeyMappings" in help_output.stdout + help_output.stderr
+                and "UseDamage" in help_output.stdout + help_output.stderr)
 
     def install(self):
         """Build and install the patched server unless a matching binary already exists."""
@@ -196,7 +197,8 @@ class TigerVNCInstaller:
         if build.exists():
             shutil.rmtree(build)
         run_cmd(["tar", "-xzf", str(archive), "-C", str(cache)])
-        for patch_name in ("tigervnc-key-event-delay.patch", "tigervnc-keymap-recovery.patch"):
+        for patch_name in ("tigervnc-key-event-delay.patch", "tigervnc-keymap-recovery.patch",
+                           "tigervnc-damage-polling.patch"):
             patch = Path(__file__).resolve().with_name(patch_name)
             run_cmd(["patch", "--directory", str(source), "-p1", "--input", str(patch)])
         run_cmd([

@@ -71,6 +71,7 @@ start_screen() {
         -Geometry "$geometry" \
         -rfbport "$vnc_port" \
         -KeyEventDelay 20 \
+        -UseDamage 0 \
         -Log '*:stderr:10' &
     component_pids+=("$!")
 

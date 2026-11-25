@@ -12,11 +12,12 @@ description: 在 Debian/Ubuntu 上安装、配置或排查共享当前 X11 桌�
 - [scripts/auto_remote_config.py](scripts/auto_remote_config.py)：安装依赖、校验并编译 TigerVNC、检测屏幕、生成 systemd 服务。
 - [scripts/tigervnc-key-event-delay.patch](scripts/tigervnc-key-event-delay.patch)：TigerVNC 键盘事件延时补丁。
 - [scripts/tigervnc-keymap-recovery.patch](scripts/tigervnc-keymap-recovery.patch)：临时键码归属登记与异常退出恢复补丁。
+- [scripts/tigervnc-damage-polling.patch](scripts/tigervnc-damage-polling.patch)：提供 XDamage 开关，允许通过轮询规避同类 XCB 断言故障。
 - [scripts/start_multivnc.sh.in](scripts/start_multivnc.sh.in)：按屏幕启动并自动重试 TigerVNC 和 noVNC 的模板。
-- [scripts/tests/test_keymap_recovery.py](scripts/tests/test_keymap_recovery.py)：在隔离 Xvfb 中验证崩溃恢复和多实例映射保护；依赖 `xvfb`、`python3-xlib`。
+- [scripts/tests/test_keymap_recovery.py](scripts/tests/test_keymap_recovery.py)：在隔离 Xvfb 中验证键码恢复，以及密码认证后的画面、鼠标和中文输入；依赖 `xvfb`、`python3-xlib`、`python3-pycryptodome`。
 - 使用和安装位置详见 [中文说明](references/README.zh-CN.md) 或 [English guide](references/README.md)。其中安装命令从本 skill 的 `scripts/` 目录执行。
 
-以上文件复制自 `dotfiles/scripts/auto_remote_config/`。部署时使用 skill 内的副本，不依赖原仓库路径。Python 安装脚本通过自身路径查找补丁和模板，因此安装脚本、两个补丁和启动模板必须放在同一目录；远程部署时一并传输。
+以上文件复制自 `dotfiles/scripts/auto_remote_config/`。部署时使用 skill 内的副本，不依赖原仓库路径。Python 安装脚本通过自身路径查找补丁和模板，因此安装脚本、三个补丁和启动模板必须放在同一目录；远程部署时一并传输。
 
 ## 部署前
 
@@ -44,7 +45,7 @@ description: 在 Debian/Ubuntu 上安装、配置或排查共享当前 X11 桌�
 
 ## 安装
 
-在目标机器切换到包含这三个运行文件的目录，再执行：
+在目标机器切换到包含安装脚本、三个补丁和启动模板的目录，再执行：
 
 ```bash
 sudo apt update
@@ -63,7 +64,7 @@ sudo python3 auto_remote_config.py \
 
 替换占位符后执行；不使用的可选参数直接省略。代理接受端口、`host:port` 或完整 URL，仅用于下载等网络请求，APT 环境会移除代理变量。
 
-脚本会启用 SSH；默认构建 TigerVNC `1.16.2`，验证源码 SHA-256 并应用两个补丁；安装 noVNC；按 `xrandr` 检测结果创建各屏幕端点，启用并重启 `multivnc.service`。只有相同版本且同时具备 `KeyEventDelay`、`RecoverKeyMappings` 的二进制才会复用。启动模板设置 `KeyEventDelay=20`，用于 AVNC 手机键盘连续输入中文；键码恢复默认开启。
+脚本会启用 SSH；默认构建 TigerVNC `1.16.2`，验证源码 SHA-256 并应用三个补丁；安装 noVNC；按 `xrandr` 检测结果创建各屏幕端点，启用并重启 `multivnc.service`。只有相同版本且同时具备 `KeyEventDelay`、`RecoverKeyMappings`、`UseDamage` 的二进制才会复用。启动模板设置 `KeyEventDelay=20`，用于 AVNC 手机键盘连续输入中文；键码恢复默认开启。`UseDamage=0` 使用轮询取图以规避同类 XDamage/XCB 故障，可能增加 CPU 占用。
 
 脚本末尾会打印 VNC 密码，分享日志或汇报结果时隐去密码。ZeroTier 加网请求后，如网络要求授权，还需在对应管理端批准；加网请求成功不等于已连通。
 
@@ -83,6 +84,8 @@ sudo ss -ltnp
 - 屏幕顺序取自安装时检测结果，使用提供的 VNC 密码。连接 IP 按实际可达的局域网或 ZeroTier 地址选择；脚本汇总的地址只筛选物理/无线网卡，不保证列出 ZeroTier 地址。
 
 有客户端测试条件时验证画面、鼠标、键盘和各屏幕映射；使用 AVNC 时检查连续中文输入。汇报实际验证范围、连接地址和服务状态，未做客户端连接时明确说明。
+
+排查掉线时，密码握手成功不代表稳定：验证认证后的连续取图、桌面操作及进程是否重启。将短时测试结果与长期使用效果分开报告。
 
 ## 维护与排查
 

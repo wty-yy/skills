@@ -27,7 +27,7 @@ sudo python3 auto_remote_config.py \
 
 `--zt_network_id` 留空时跳过 ZeroTier。`--proxy` 支持端口号、`host:port` 或完整代理 URL；APT 安装使用不含代理变量的环境。
 
-安装过程会生成并重启 `multivnc.service`。首次源码编译需要联网；只有版本匹配且同时具备 `KeyEventDelay`、`RecoverKeyMappings` 的程序才会复用，旧补丁版本会重新编译。
+安装过程会生成并重启 `multivnc.service`。首次源码编译需要联网；只有版本匹配且同时具备 `KeyEventDelay`、`RecoverKeyMappings`、`UseDamage` 的程序才会复用，旧补丁版本会重新编译。
 
 ### 连接
 
@@ -54,6 +54,7 @@ sudo journalctl -u multivnc.service -f
 - `auto_remote_config.py`：安装依赖、校验源码 SHA-256、构建 TigerVNC、检测屏幕并生成系统服务。
 - `tigervnc-key-event-delay.patch`：增加可配置的按键释放延时。
 - `tigervnc-keymap-recovery.patch`：记录临时映射归属，在实例异常退出后按需回收。
+- `tigervnc-damage-polling.patch`：提供 `UseDamage` 开关；启动模板设置 `UseDamage=0`，使用轮询取图。
 - `start_multivnc.sh.in`：生成各屏幕的启动脚本，自动重试退出的 TigerVNC 和 noVNC 进程。
 
 安装位置：
@@ -69,10 +70,16 @@ sudo journalctl -u multivnc.service -f
 
 ### 验证键码恢复
 
-安装测试依赖 `xvfb`、`python3-xlib`，使用已编译的新二进制运行：
+安装测试依赖 `xvfb`、`python3-xlib`、`python3-pycryptodome`，使用已编译的新二进制运行：
 
 ```bash
 /usr/bin/python3 tests/test_keymap_recovery.py --server ~/.local/bin/x0vncserver-avnc -v
 ```
 
-测试自行创建隔离的 Xvfb 桌面和仅监听本机的测试端口，验证崩溃恢复、超过 19 个不同汉字、存活实例保护、未登记或已修改的映射、按键未释放及正常退出清理，不连接当前桌面。支持 `--xvfb /path/to/Xvfb`。测试不代表已修复触发进程崩溃的 Xlib/XCB 问题。
+测试自行创建隔离的 Xvfb 桌面和仅监听本机的测试端口，验证崩溃恢复、超过 19 个不同汉字、存活实例保护、未登记或已修改的映射、按键未释放及正常退出清理，不连接当前桌面。支持 `--xvfb /path/to/Xvfb`。另验证密码认证后的连续画面更新、鼠标点击和中文输入。
+
+### XCB 断言掉线
+
+启动模板使用 `UseDamage=0`，绕开 XDamage 通知路径，代价是轮询可能增加 CPU 占用。此设置是针对 `xcb_xlib_threads_sequence_lost` 同类故障的规避方案，不代表修复了 Xorg/libX11 底层问题；参见 [TigerVNC #869](https://github.com/TigerVNC/tigervnc/issues/869)。恢复 XDamage 可将启动参数改为 `-UseDamage 1` 并重启服务。
+
+排查时对照 `multivnc.service` 的进程退出日志；`active` 或密码握手成功不足以证明稳定性，还需要连接后持续取图、操作桌面并检查有无进程重启。

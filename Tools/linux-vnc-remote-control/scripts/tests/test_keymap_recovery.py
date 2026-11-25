@@ -8,8 +8,8 @@ Full Command:
     python3 test_keymap_recovery.py --server /path/to/x0vncserver --xvfb /path/to/Xvfb
 
 Notes:
-    Requires python-xlib and Xvfb. Uses loopback VNC without authentication
-    only on an isolated test display; never connects to the user's desktop.
+    Requires python-xlib, pycryptodome, and Xvfb. Uses loopback VNC only on an
+    isolated test display; never connects to the user's desktop.
 """
 
 import argparse
@@ -52,7 +52,7 @@ class KeymapRecoveryTest(unittest.TestCase):
         self.root = self.x.screen().root
         self.window = self.root.create_window(
             0, 0, 200, 100, 0, self.x.screen().root_depth,
-            event_mask=X.KeyPressMask | X.KeyReleaseMask)
+            event_mask=X.KeyPressMask | X.KeyReleaseMask | X.ButtonPressMask)
         self.window.map()
         self.window.set_input_focus(X.RevertToParent, X.CurrentTime)
         self.x.sync()
@@ -87,7 +87,7 @@ class KeymapRecoveryTest(unittest.TestCase):
             result += chunk
         return result
 
-    def start_server(self):
+    def start_server(self, extra_args=(), password=None):
         """Connect to a fresh patched server using the RFB 3.8 handshake."""
         with socket.socket() as probe:
             probe.bind(('127.0.0.1', 0))
@@ -95,10 +95,21 @@ class KeymapRecoveryTest(unittest.TestCase):
         log_path = Path(self.temp.name) / f'{port}.log'
         log = log_path.open('wb')
         self.addCleanup(log.close)
+        security_args = ['-SecurityTypes', 'None']
+        if password is not None:
+            try:
+                from Crypto.Cipher import DES
+            except ImportError:
+                from Cryptodome.Cipher import DES
+            key = bytes(int(f'{byte:08b}'[::-1], 2) for byte in [23, 82, 107, 6, 35, 78, 88, 7])
+            password_file = Path(self.temp.name) / f'{port}.passwd'
+            password_file.write_bytes(DES.new(key, DES.MODE_ECB).encrypt(password.ljust(8, b'\0')))
+            password_file.chmod(0o600)
+            security_args = ['-SecurityTypes', 'VncAuth', '-PasswordFile', str(password_file)]
         process = subprocess.Popen(
             [OPTIONS.server, '-display', self.display_name, '-rfbport', str(port),
-             '-localhost', '-SecurityTypes', 'None', '-AlwaysShared',
-             '-KeyEventDelay', '20', '-Log', '*:stderr:30'],
+             '-localhost', *security_args, '-AlwaysShared',
+             '-KeyEventDelay', '20', '-Log', '*:stderr:30', *extra_args],
             stdout=log, stderr=log, env=self.env)
         self.addCleanup(self.stop_process, process)
         deadline = time.monotonic() + 10
@@ -114,8 +125,12 @@ class KeymapRecoveryTest(unittest.TestCase):
         self.assertEqual(self.receive(connection, 12), b'RFB 003.008\n')
         connection.sendall(b'RFB 003.008\n')
         count = self.receive(connection, 1)[0]
-        self.assertIn(1, self.receive(connection, count))
-        connection.sendall(b'\x01')
+        security_type = 1 if password is None else 2
+        self.assertIn(security_type, self.receive(connection, count))
+        connection.sendall(bytes([security_type]))
+        if password is not None:
+            key = bytes(int(f'{byte:08b}'[::-1], 2) for byte in password.ljust(8, b'\0'))
+            connection.sendall(DES.new(key, DES.MODE_ECB).encrypt(self.receive(connection, 16)))
         self.assertEqual(self.receive(connection, 4), b'\0' * 4)
         connection.sendall(b'\x01')
         header = self.receive(connection, 24)
@@ -232,6 +247,48 @@ class KeymapRecoveryTest(unittest.TestCase):
             self.assertFalse(any(after[key]))
         for key in before.keys() - set(self.empty):
             self.assertEqual(before[key], after[key])
+
+    def test_polling_framebuffer_and_input_after_authentication(self):
+        """Verify authenticated pixel updates, pointer clicks, and Chinese input."""
+        process, client, log = self.start_server(['-UseDamage', '0'], password=b'vnc-test')
+        client.sendall(b'\0' * 4 + struct.pack('!BBBBHHHBBBxxx', 32, 24, 0, 1, 255, 255, 255, 16, 8, 0))
+        client.sendall(struct.pack('!BBHi', 2, 0, 1, 0))
+        gc = self.window.create_gc()
+        for index in range(30):
+            color = 0x123400 + index
+            gc.change(foreground=color)
+            self.window.fill_rectangle(gc, 0, 0, 200, 100)
+            self.x.sync()
+            observed = None
+            for attempt in range(3):
+                client.sendall(struct.pack('!BBHHHH', 3, bool(index or attempt), 0, 0, 640, 480))
+                self.assertEqual(self.receive(client, 1), b'\0')
+                count = struct.unpack('!xH', self.receive(client, 3))[0]
+                observed = None
+                for _ in range(count):
+                    x, y, width, height, encoding = struct.unpack('!HHHHi', self.receive(client, 12))
+                    self.assertEqual(encoding, 0)
+                    pixels = self.receive(client, width * height * 4)
+                    if x <= 20 < x + width and y <= 20 < y + height:
+                        offset = ((20 - y) * width + 20 - x) * 4
+                        observed = int.from_bytes(pixels[offset:offset + 4], 'little') & 0xffffff
+                if observed == color:
+                    break
+            self.assertEqual(observed, color)
+        client.sendall(struct.pack('!BBHH', 5, 1, 30, 30))
+        client.sendall(struct.pack('!BBHH', 5, 0, 30, 30))
+        deadline = time.monotonic() + 2
+        clicked = False
+        while time.monotonic() < deadline and not clicked:
+            if self.x.pending_events():
+                event = self.x.next_event()
+                clicked = event.type == X.ButtonPress and event.detail == 1
+            else:
+                select.select([self.x.fileno()], [], [], 0.01)
+        self.assertTrue(clicked)
+        self.type_symbol(client, 0x1004e2d)
+        self.assertIsNone(process.poll())
+        self.assertIn('disabled; using polling', log.read_text())
 
 
 if __name__ == '__main__':
