@@ -13,10 +13,7 @@
 - [code-simplifier](Coding/code-simplifier/)：保持行为不变，简化代码。
 - [coding-project-standards](Coding/coding-project-standards/)：在项目级 `AGENTS.md` 中维护 AI 实验与大文件存储规范。
 - [git-version-workflow](Coding/git-version-workflow/)：应用版本号提交、squash、rebase、校验与推送规范。
-- [no-ai-slop](Coding/no-ai-slop/)：润色中英文稿件，去除 AI 腔并保留个人语气。
 - [python-docstring-standard](Coding/python-docstring-standard/)：规范 Python 脚本头、类与函数文档字符串。
-- [writing-a-project-proposal](Coding/writing-a-project-proposal/)：撰写中文项目申报材料。
-- [wty-markdown-standards](Coding/wty-markdown-standards/)：规范简洁的 Markdown 文档、双语 README 和更新日志。
 
 ### Tools
 
@@ -37,6 +34,13 @@
 - [dsh-tools](Tools/LLM/dsh-tools/)：检查 DSH 依赖，为 Web 和 TUI 配置 API 接入。
 - [opencode-tools](Tools/LLM/opencode-tools/)：查询 OpenCode 用量和费用。
 - [token-usage](Tools/LLM/token-usage/)：部署和维护 Token 用量网页及采集器。
+
+### Writing
+
+- [no-ai-slop](Writing/no-ai-slop/)：润色中英文稿件，去除 AI 腔并保留个人语气。
+- [write-paper](Writing/write-paper/)：在保持科学原意与证据边界的前提下撰写、润色、翻译和去除学术论文中的 AI 腔。
+- [writing-a-project-proposal](Writing/writing-a-project-proposal/)：撰写中文项目申报材料。
+- [wty-markdown-standards](Writing/wty-markdown-standards/)：规范简洁的 Markdown 文档、双语 README 和更新日志。
 
 ## 使用
 

@@ -13,10 +13,7 @@ Categories follow `<category>/<skill>/SKILL.md`; the installers discover them au
 - [code-simplifier](Coding/code-simplifier/): simplify code without changing behavior.
 - [coding-project-standards](Coding/coding-project-standards/): maintain project-level `AGENTS.md` rules for AI experiments and bulk data storage.
 - [git-version-workflow](Coding/git-version-workflow/): apply versioned commit, squash, rebase, verification, and push conventions.
-- [no-ai-slop](Coding/no-ai-slop/): edit English or Chinese drafts to remove AI patterns while preserving personal voice.
 - [python-docstring-standard](Coding/python-docstring-standard/): standardize Python script headers, class docstrings, and function docstrings.
-- [writing-a-project-proposal](Coding/writing-a-project-proposal/): draft Chinese project proposals.
-- [wty-markdown-standards](Coding/wty-markdown-standards/): format concise Markdown documentation, bilingual READMEs, and changelogs.
 
 ### Tools
 
@@ -37,6 +34,13 @@ Categories follow `<category>/<skill>/SKILL.md`; the installers discover them au
 - [dsh-tools](Tools/LLM/dsh-tools/): check DSH prerequisites and configure API access for Web and TUI.
 - [opencode-tools](Tools/LLM/opencode-tools/): check OpenCode usage and costs.
 - [token-usage](Tools/LLM/token-usage/): deploy and maintain the Token usage dashboard and collectors.
+
+### Writing
+
+- [no-ai-slop](Writing/no-ai-slop/): edit English or Chinese drafts to remove AI patterns while preserving personal voice.
+- [write-paper](Writing/write-paper/): draft, polish, translate, and de-AI academic papers while preserving scientific meaning and evidence bounds.
+- [writing-a-project-proposal](Writing/writing-a-project-proposal/): draft Chinese project proposals.
+- [wty-markdown-standards](Writing/wty-markdown-standards/): format concise Markdown documentation, bilingual READMEs, and changelogs.
 
 ## Usage
 

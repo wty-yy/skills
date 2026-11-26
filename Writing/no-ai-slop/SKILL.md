@@ -1,6 +1,6 @@
 ---
 name: no-ai-slop
-description: Edit English or Chinese drafts into sharper, more human writing while preserving the writer's personal voice, or detect AI-slop patterns without rewriting. Use for essays, blog posts, commentary, and general prose when the user wants writing clearer, more direct, or less AI-sounding, or asks to audit AI patterns (use dedicated skills instead for terse technical READMEs or formal Chinese project proposals).
+description: Edit English or Chinese drafts into sharper, more human writing while preserving the writer's personal voice, or detect AI-slop patterns without rewriting. Use for essays, blog posts, commentary, and general prose when the user wants writing clearer, more direct, or less AI-sounding, or asks to audit AI patterns (use dedicated skills instead for academic papers, terse technical READMEs, or formal Chinese project proposals).
 ---
 
 # No AI slop
