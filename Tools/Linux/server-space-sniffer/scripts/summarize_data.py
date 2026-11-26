@@ -79,10 +79,10 @@ def main():
     """Save the scan's directory accounting and render a concise result table."""
     root = Path.cwd()
     script_dir = Path(__file__).resolve().parent
-    results = root / "results"
+    results = root / "space_sniffer_results"
     errors = (results / "data_dust_errors.txt").read_text()
     if errors:
-        raise RuntimeError(f"Scan has warnings; review results/data_dust_errors.txt: {errors[:1000]}")
+        raise RuntimeError(f"Scan has warnings; review space_sniffer_results/data_dust_errors.txt: {errors[:1000]}")
     report = summarize(parse_dust(json.loads((results / "data_dust.json").read_text())))
     report["cpu_budget"] = json.loads((results / "cpu_budget.json").read_text())
     report["started_at"] = (results / "data_scan_started.txt").read_text().strip()

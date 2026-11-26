@@ -2,7 +2,7 @@
 
 Overview:
     Read minimal Docker metadata, then scan only Docker's data directory once.
-    Write DOCKER_USAGE.md and results/docker_usage.json in the working directory.
+    Write DOCKER_USAGE.md and space_sniffer_results/docker_usage.json in the working directory.
 
 Quick Start:
     python3 /path/to/server-space-sniffer/scripts/docker_usage.py
@@ -35,7 +35,7 @@ from summarize_data import human
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = Path.cwd()
-RESULTS = ROOT / "results"
+RESULTS = ROOT / "space_sniffer_results"
 DUST_PATH = Path("~/.local/bin/dust").expanduser()
 
 
@@ -239,7 +239,7 @@ def main():
     metadata = json.loads((RESULTS / "docker_inventory.json").read_text())
     errors = (RESULTS / "docker_dust_errors.txt").read_text()
     if errors:
-        raise RuntimeError(f"Review results/docker_dust_errors.txt before using this scan: {errors[:1000]}")
+        raise RuntimeError(f"Review space_sniffer_results/docker_dust_errors.txt before using this scan: {errors[:1000]}")
     usage = flatten(json.loads((RESULTS / "docker_dust.json").read_text()), metadata["daemon"]["root"])
     write_report(attribute(metadata, usage))
 

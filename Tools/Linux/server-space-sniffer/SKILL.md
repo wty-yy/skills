@@ -11,7 +11,7 @@ description: "统计 Linux 服务器磁盘容量、/data 下各用户目录和 D
 
 依赖 Linux、Python 3.9+、`findmnt`；完整目录扫描另需本机 rootful Docker 权限及已有 `ubuntu:24.04` 镜像。Docker 内部明细目前支持 `overlay2`。临时扫描容器只读挂载数据目录、禁用子挂载，完成后自动删除。
 
-在用户指定的统计工作目录执行脚本；未指定时使用当前项目目录。结果写入该工作目录的 `results/`、`DATA_USAGE.md`、`DOCKER_USAGE.md`，不要在 Skill 目录中生成主机快照。命令中的 `SKILL_DIR` 指本文件所在目录，使用其实际绝对路径。
+在用户指定的统计工作目录执行脚本；未指定时使用当前项目目录。结果写入该工作目录的 `space_sniffer_results/`、`DATA_USAGE.md`、`DOCKER_USAGE.md`，不要在 Skill 目录中生成主机快照。命令中的 `SKILL_DIR` 指本文件所在目录，使用其实际绝对路径。
 
 ## 按需求运行
 
@@ -50,6 +50,6 @@ python3 "$SKILL_DIR/scripts/docker_usage.py" --report-only
 - 不跟随符号链接；指向 `/hard_data` 的用户目录仅列出目标，不计入 `/data`。硬链接全局只计一次，容器 overlay 运行视图排除。
 - 容器占用合计为可写层加容器目录，日志已包含其中；共享镜像、卷和 bind mount 分开列出。镜像各行可能引用相同层，不能直接累加。详细口径见 [references/accounting.md](references/accounting.md)。
 - 查询容器列表时显式使用 `--size=false` 和选定字段；`docker ps --format '{{json .}}'` 可能隐式触发大小计算。脚本只采集选定 inspect 字段，不采集环境变量或启动命令。
-- 用户要求当前用量时刷新；仅解读已有结果时直接读取快照并注明时间。扫描失败或出现错误时检查 `results/*errors.txt`，未测得的项目不能当成零，也不要把历史报告当成该次成功结果。
+- 用户要求当前用量时刷新；仅解读已有结果时直接读取快照并注明时间。扫描失败或出现错误时检查 `space_sniffer_results/*errors.txt`，未测得的项目不能当成零，也不要把历史报告当成该次成功结果。
 
 报告先给磁盘占用、用户排名或最大容器，再链接完整明细。说明数据时间、未计入的外部目录和未测得项目；不依据“已停止”或“未映射”判断可安全删除。
