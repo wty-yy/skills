@@ -413,24 +413,207 @@ restore_terminal() {
     printf '\033[0m\033[?25h\033[?1049l'
 }
 
-choose_skills() {
-    local agent="$1" target_dir="$2" stage="${3:-skills}"
-    local cursor=0 start=0 end index item checked marker label key sequence name
-    local category category_total category_checked child prefix
-    local terminal_rows terminal_columns page_size
+format_message() {
+    local _fm_var="$1" _fm_en="$2" _fm_zh="$3"
+    shift 3
+    if [[ "$ui_language" == zh ]]; then
+        printf -v "$_fm_var" -- "$_fm_zh" "$@"
+    else
+        printf -v "$_fm_var" -- "$_fm_en" "$@"
+    fi
+}
 
-    read -r terminal_rows terminal_columns < <(stty size 2>/dev/null || printf '24 80\n')
-    [[ "$terminal_rows" =~ ^[0-9]+$ ]] || terminal_rows=24
-    page_size=$((terminal_rows - 10))
-    [[ "$page_size" -gt 0 ]] || page_size=1
+update_terminal_size() {
+    local size rows='' cols=''
+    size="$(stty size 2>/dev/null || stty size <&1 2>/dev/null || true)"
+    if [[ "$size" =~ ([0-9]+)[[:space:]]+([0-9]+) ]]; then
+        rows="${BASH_REMATCH[1]}"
+        cols="${BASH_REMATCH[2]}"
+    fi
+    if ! [[ "$rows" =~ ^[0-9]+$ && "$rows" -gt 0 ]]; then
+        rows="${LINES:-}"
+        [[ "$rows" =~ ^[0-9]+$ && "$rows" -gt 0 ]] || rows=24
+    fi
+    if ! [[ "$cols" =~ ^[0-9]+$ && "$cols" -gt 0 ]]; then
+        cols="${COLUMNS:-}"
+        [[ "$cols" =~ ^[0-9]+$ && "$cols" -gt 0 ]] || cols=80
+    fi
+    terminal_rows="$rows"
+    terminal_columns="$cols"
+}
 
-    trap restore_terminal EXIT
-    trap 'exit 130' INT
-    trap 'exit 143' TERM
-    trap 'exit 129' HUP
-    printf '\033[?1049h\033[?25l'
+next_char_width() {
+    local text="$1" offset="$2" ch cp=0
+    ch="${text:offset:1}"
+    printf -v cp '%d' "'$ch"
+    if [[ "$utf8_locale" -eq 1 ]]; then
+        _char_step=1
+        if (( cp < 128 )); then
+            _char_width=1
+        elif (( (cp >= 0x1100 && cp <= 0x115F) ||
+                (cp >= 0x2E80 && cp <= 0xA4CF) ||
+                (cp >= 0xAC00 && cp <= 0xD7A3) ||
+                (cp >= 0xF900 && cp <= 0xFAFF) ||
+                (cp >= 0xFE10 && cp <= 0xFE6F) ||
+                (cp >= 0xFF00 && cp <= 0xFF60) ||
+                (cp >= 0xFFE0 && cp <= 0xFFE6) ||
+                (cp >= 0x20000 && cp <= 0x3FFFD) )); then
+            _char_width=2
+        else
+            _char_width=1
+        fi
+    elif (( cp < 128 )); then
+        _char_step=1
+        _char_width=1
+    elif (( cp >= 192 && cp < 224 )); then
+        _char_step=2
+        _char_width=1
+    elif (( cp >= 224 && cp < 240 )); then
+        _char_step=3
+        if (( cp >= 227 )); then _char_width=2; else _char_width=1; fi
+    elif (( cp >= 240 )); then
+        _char_step=4
+        _char_width=2
+    else
+        _char_step=1
+        _char_width=0
+    fi
+}
 
+measure_line_rows() {
+    local text="$1" cols="$2"
+    local len="${#text}" i=0 row=1 col=0
+    if [[ "$len" -eq 0 ]] || \
+       [[ "$utf8_locale" -eq 1 && $((len * 2)) -lt "$cols" ]] || \
+       [[ "$utf8_locale" -eq 0 && "$len" -lt "$cols" ]]; then
+        _line_rows=1
+        _line_needs_el=1
+        return
+    fi
+    while [[ "$i" -lt "$len" ]]; do
+        next_char_width "$text" "$i"
+        if [[ "$_char_width" -gt 0 ]]; then
+            if (( col > 0 && col + _char_width > cols )); then
+                row=$((row + 1))
+                col="$_char_width"
+            else
+                col=$((col + _char_width))
+            fi
+        fi
+        i=$((i + _char_step))
+    done
+    _line_rows="$row"
+    if [[ "$col" -lt "$cols" ]]; then
+        _line_needs_el=1
+    else
+        _line_needs_el=0
+    fi
+}
+
+fit_line() {
+    local text="$1" max_cols="$2"
+    local len="${#text}" i=0 total=0 ellipsis_limit=$((max_cols - 3)) ellipsis_end=0 hard_end=0
+    if [[ "$utf8_locale" -eq 1 && $((len * 2)) -le "$max_cols" ]] || \
+       [[ "$utf8_locale" -eq 0 && "$len" -le "$max_cols" ]]; then
+        _fit_result="$text"
+        return
+    fi
+    while [[ "$i" -lt "$len" ]]; do
+        next_char_width "$text" "$i"
+        total=$((total + _char_width))
+        if [[ "$total" -le "$ellipsis_limit" ]]; then
+            ellipsis_end=$((i + _char_step))
+        fi
+        if [[ "$total" -le "$max_cols" ]]; then
+            hard_end=$((i + _char_step))
+        fi
+        i=$((i + _char_step))
+    done
+    if [[ "$total" -le "$max_cols" ]]; then
+        _fit_result="$text"
+    elif [[ "$max_cols" -ge 4 ]]; then
+        _fit_result="${text:0:ellipsis_end}..."
+    else
+        _fit_result="${text:0:hard_end}"
+    fi
+}
+
+render_choose_skills() {
+    local IFS=$' \t\n'
+    if [[ "$rendering" -eq 1 ]]; then
+        resized=1
+        return 0
+    fi
+    rendering=1
     while true; do
+        resized=0
+        update_terminal_size
+
+        local index item marker label name prefix category category_total category_checked child
+        local header_lines=() line summary_probe summary_line footer_line
+        local chrome_rows=0 max_start end item_cols rendered_rows=0 frame=$'\033[H'
+        local _char_step _char_width _line_rows _line_needs_el _fit_result
+
+        if [[ "$terminal_rows" -ne "$prev_rows" || "$terminal_columns" -ne "$prev_cols" ]]; then
+            frame=$'\033[H\033[2J'
+            prev_rows="$terminal_rows"
+            prev_cols="$terminal_columns"
+        fi
+
+        checked=0
+        for index in "${!items[@]}"; do
+            checked=$((checked + selected[index]))
+        done
+
+        if [[ "$stage" == tools ]]; then
+            format_message line 'AI tool selection' '选择 AI 工具'
+            header_lines+=("$line" '')
+        elif [[ "$action" == uninstall ]]; then
+            format_message line 'Skills to uninstall - %s' '选择要卸载的 skill — %s' "$agent"
+            header_lines+=("$line")
+            format_message line 'Directory: %s' '目录：%s' "$target_dir"
+            header_lines+=("$line" '')
+        else
+            format_message line 'Skill selection - %s' 'Skill 选择 — %s' "$agent"
+            header_lines+=("$line")
+            format_message line 'Directory: %s' '目录：%s' "$target_dir"
+            header_lines+=("$line" '')
+        fi
+        format_message line 'Up/Down or j/k: move | Space: toggle skill/category' '↑/↓ 或 j/k 移动 · 空格切换 skill/类别'
+        header_lines+=("$line")
+        format_message line 'Enter: apply | a: all | n: none | q/Esc: cancel' 'Enter 应用 · a 全选 · n 全不选 · q/Esc 取消'
+        header_lines+=("$line" '')
+
+        format_message summary_probe \
+            'Selected %d/%d; rows %d-%d | [-] = partially selected' \
+            '已勾选 %d/%d，显示 %d-%d · [-] 表示部分选中' \
+            "$checked" "${#items[@]}" "${#tree_items[@]}" "${#tree_items[@]}"
+
+        if [[ "$stage" == tools ]]; then
+            format_message footer_line \
+                'Select at least one AI tool, then press Enter to choose its skills.' \
+                '至少勾选一个 AI 工具，按 Enter 进入技能选择。'
+        elif [[ "$action" == uninstall ]]; then
+            format_message footer_line \
+                'Only checked repository links will be removed.' \
+                '仅卸载勾选的本仓库链接。'
+        else
+            format_message footer_line \
+                'Selected items will be linked; deselected repository links will be removed.' \
+                '勾选项会创建链接；取消勾选的本仓库链接会删除。'
+        fi
+
+        for line in "${header_lines[@]}" "$summary_probe" '' "$footer_line"; do
+            measure_line_rows "$line" "$terminal_columns"
+            chrome_rows=$((chrome_rows + _line_rows))
+        done
+
+        page_size=$((terminal_rows - chrome_rows))
+        [[ "$page_size" -gt 0 ]] || page_size=1
+
+        max_start=$((${#tree_items[@]} - page_size))
+        [[ "$max_start" -ge 0 ]] || max_start=0
+        [[ "$start" -le "$max_start" ]] || start="$max_start"
         if [[ "$cursor" -lt "$start" ]]; then
             start="$cursor"
         elif [[ "$cursor" -ge $((start + page_size)) ]]; then
@@ -438,25 +621,24 @@ choose_skills() {
         fi
         end=$((start + page_size))
         [[ "$end" -le ${#tree_items[@]} ]] || end=${#tree_items[@]}
-        checked=0
-        for index in "${!items[@]}"; do
-            checked=$((checked + selected[index]))
+
+        format_message summary_line \
+            'Selected %d/%d; rows %d-%d | [-] = partially selected' \
+            '已勾选 %d/%d，显示 %d-%d · [-] 表示部分选中' \
+            "$checked" "${#items[@]}" "$((start + 1))" "$end"
+
+        for line in "${header_lines[@]}" "$summary_line"; do
+            measure_line_rows "$line" "$terminal_columns"
+            rendered_rows=$((rendered_rows + _line_rows))
+            if [[ "$_line_needs_el" -eq 1 ]]; then
+                frame+="${line}"$'\033[K\n'
+            else
+                frame+="${line}"$'\n'
+            fi
         done
 
-        printf '\033[H\033[2J'
-        if [[ "$stage" == tools ]]; then
-            print_message 'AI tool selection\n\n' '选择 AI 工具\n\n'
-        elif [[ "$action" == uninstall ]]; then
-            print_message 'Skills to uninstall - %s\nDirectory: %s\n\n' '选择要卸载的 skill — %s\n目录：%s\n\n' "$agent" "$target_dir"
-        else
-            print_message 'Skill selection - %s\nDirectory: %s\n\n' 'Skill 选择 — %s\n目录：%s\n\n' "$agent" "$target_dir"
-        fi
-        print_message 'Up/Down or j/k: move | Space: toggle skill/category\n' '↑/↓ 或 j/k 移动 · 空格切换 skill/类别\n'
-        print_message 'Enter: apply | a: all | n: none | q/Esc: cancel\n\n' 'Enter 应用 · a 全选 · n 全不选 · q/Esc 取消\n\n'
-        print_message 'Selected %d/%d; rows %d-%d | [-] = partially selected\n' '已勾选 %d/%d，显示 %d-%d · [-] 表示部分选中\n' "$checked" "${#items[@]}" "$((start + 1))" "$end"
-
+        item_cols=$((terminal_columns > 1 ? terminal_columns - 1 : 1))
         for ((index = start; index < end; index++)); do
-            [[ "$index" -ne "$cursor" ]] || printf '\033[7m'
             item="${tree_items[index]}"
             if [[ "$item" -eq -1 ]]; then
                 category="${tree_categories[index]}"
@@ -473,52 +655,127 @@ choose_skills() {
                 elif [[ "$category_checked" -gt 0 ]]; then
                     marker=-
                 fi
-                printf ' [%s] %s (%d/%d)\033[0m\n' "$marker" "$category" "$category_checked" "$category_total"
-                continue
-            fi
-            marker=' '
-            [[ ${selected[item]} -eq 0 ]] || marker=x
-            label=''
-            if [[ "$stage" != tools ]]; then
-                case "${statuses[item]}" in
-                    installed) label="$(print_message 'Installed' '已安装')" ;;
-                    available) label="$(print_message 'Not installed' '未安装')" ;;
-                    conflict) label='' ;;
-                    stale) label="$(print_message 'Installed; source skill removed' '已安装，源 skill 已删除')" ;;
-                    source) label="$(print_message 'Source directory; cannot uninstall' '源目录，保留且不可卸载')" ;;
-                esac
-            fi
-            prefix='├─'
-            [[ ${tree_last_children[index]} -eq 0 ]] || prefix='└─'
-            name="${items[item]##*/}"
-            if [[ "${items[item]}" == "$repo_root/AGENTS.md" ]]; then
-                if [[ "$action" == uninstall ]]; then
-                    name="$(print_message 'AGENTS.md -> %s (remove link)' 'AGENTS.md -> %s（移除链接）' "$(instructions_file "$agent")")"
+                printf -v line ' [%s] %s (%d/%d)' "$marker" "$category" "$category_checked" "$category_total"
+            else
+                marker=' '
+                [[ ${selected[item]} -eq 0 ]] || marker=x
+                label=''
+                if [[ "$stage" != tools ]]; then
+                    case "${statuses[item]}" in
+                        installed) label="$label_installed" ;;
+                        available) label="$label_available" ;;
+                        conflict) label='' ;;
+                        stale) label="$label_stale" ;;
+                        source) label="$label_source" ;;
+                    esac
+                fi
+                prefix='├─'
+                [[ ${tree_last_children[index]} -eq 0 ]] || prefix='└─'
+                name="${items[item]##*/}"
+                if [[ "${items[item]}" == "$repo_root/AGENTS.md" ]]; then
+                    if [[ "$action" == uninstall ]]; then
+                        format_message name 'AGENTS.md -> %s (remove link)' 'AGENTS.md -> %s（移除链接）' "$instructions_path"
+                    else
+                        format_message name 'AGENTS.md -> %s (replaces file)' 'AGENTS.md -> %s（覆盖现有文件）' "$instructions_path"
+                    fi
+                fi
+                [[ -z "$label" ]] || name+="  ($label)"
+                if [[ "$stage" == tools || "${items[item]}" == "$repo_root/AGENTS.md" ]]; then
+                    printf -v line ' [%s] %s' "$marker" "$name"
                 else
-                    name="$(print_message 'AGENTS.md -> %s (replaces file)' 'AGENTS.md -> %s（覆盖现有文件）' "$(instructions_file "$agent")")"
+                    printf -v line '   %s [%s] %s' "$prefix" "$marker" "$name"
                 fi
             fi
-            [[ -z "$label" ]] || name+="  ($label)"
-            if [[ "$stage" == tools || "${items[item]}" == "$repo_root/AGENTS.md" ]]; then
-                printf ' [%s] %s\033[0m\n' "$marker" "$name"
+
+            fit_line "$line" "$item_cols"
+            rendered_rows=$((rendered_rows + 1))
+            if [[ "$index" -eq "$cursor" ]]; then
+                frame+=$'\033[7m'"${_fit_result}"$'\033[0m'
             else
-                printf '   %s [%s] %s\033[0m\n' "$prefix" "$marker" "$name"
+                frame+="${_fit_result}"
+            fi
+            if [[ "$terminal_columns" -gt 1 ]]; then
+                frame+=$'\033[K\n'
+            else
+                frame+=$'\n'
             fi
         done
-        if [[ "$stage" == tools ]]; then
-            print_message '\nSelect at least one AI tool, then press Enter to choose its skills.\n' '\n至少勾选一个 AI 工具，按 Enter 进入技能选择。\n'
-        elif [[ "$action" == uninstall ]]; then
-            print_message '\nOnly checked repository links will be removed.\n' '\n仅卸载勾选的本仓库链接。\n'
-        else
-            print_message '\nSelected items will be linked; deselected repository links will be removed.\n' '\n勾选项会创建链接；取消勾选的本仓库链接会删除。\n'
+
+        frame+=$'\033[K\n'
+        rendered_rows=$((rendered_rows + 1))
+        measure_line_rows "$footer_line" "$terminal_columns"
+        rendered_rows=$((rendered_rows + _line_rows))
+        frame+="$footer_line"
+        if [[ "$_line_needs_el" -eq 1 ]]; then
+            frame+=$'\033[J'
+        elif [[ "$rendered_rows" -lt "$terminal_rows" ]]; then
+            frame+=$'\n\033[J'
         fi
 
-        key=''
-        if ! IFS= read -rsn1 key; then
-            restore_terminal
-            trap - EXIT INT TERM HUP
-            return 1
-        fi
+        printf '%s' "$frame"
+        [[ "$resized" -eq 1 ]] || break
+    done
+    rendering=0
+}
+
+handle_terminal_resize() {
+    if [[ "$in_read" -eq 1 ]]; then
+        render_choose_skills
+    else
+        resized=1
+    fi
+}
+
+choose_skills() {
+    local agent="$1" target_dir="$2" stage="${3:-skills}"
+    local cursor=0 start=0 index item checked key sequence rc
+    local terminal_rows=24 terminal_columns=80 page_size=1
+    local prev_rows=0 prev_cols=0
+    local resized=0 rendering=0 in_read=0
+    local utf8_probe='中' utf8_locale=0
+    local instructions_path=''
+    local label_installed label_available label_stale label_source
+
+    if [[ "${#utf8_probe}" -eq 1 ]]; then utf8_locale=1; fi
+    if [[ "$stage" != tools ]]; then
+        instructions_path="$(instructions_file "$agent")"
+    fi
+    format_message label_installed 'Installed' '已安装'
+    format_message label_available 'Not installed' '未安装'
+    format_message label_stale 'Installed; source skill removed' '已安装，源 skill 已删除'
+    format_message label_source 'Source directory; cannot uninstall' '源目录，保留且不可卸载'
+
+    trap restore_terminal EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'exit 129' HUP
+    trap handle_terminal_resize WINCH
+    printf '\033[?1049h\033[?25l\033[2J'
+
+    while true; do
+        render_choose_skills
+
+        while true; do
+            in_read=1
+            if [[ "$resized" -eq 1 ]]; then
+                in_read=0
+                render_choose_skills
+                continue
+            fi
+            key=''
+            rc=0
+            IFS= read -rsn1 -t 3600 key || rc=$?
+            in_read=0
+            if [[ "$rc" -gt 128 ]]; then
+                continue
+            elif [[ "$rc" -ne 0 ]]; then
+                restore_terminal
+                trap - EXIT INT TERM HUP WINCH
+                return 1
+            fi
+            break
+        done
+
         if [[ "$key" == $'\033' ]]; then
             sequence=''
             IFS= read -rsn1 -t 1 sequence || true
@@ -555,7 +812,7 @@ choose_skills() {
             ''|q)
                 [[ "$stage" != tools || "$key" == q || "$checked" -gt 0 ]] || continue
                 restore_terminal
-                trap - EXIT INT TERM HUP
+                trap - EXIT INT TERM HUP WINCH
                 [[ "$key" != q ]]
                 return
                 ;;

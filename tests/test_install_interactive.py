@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 import argparse
+import fcntl
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import shutil
+import struct
 import subprocess
 import tempfile
+import termios
 import time
 import unittest
 
@@ -202,6 +206,165 @@ class InstallerTests(unittest.TestCase):
         shutil.rmtree(self.repo / 'Tools/LLM/opencode-tools')
         self.batch('install', 'codex')
         self.assertTrue((self.links / 'check-opencode-usage').is_symlink())
+
+    def spawn_pty_with_ctty(self, action, args, env, rows=None, cols=None):
+        master, slave = pty.openpty()
+        if rows is not None and cols is not None:
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
+
+        def preexec():
+            os.setsid()
+            fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+        process = subprocess.Popen(
+            self.command(action, *args), env=env,
+            stdin=slave, stdout=slave, stderr=slave, preexec_fn=preexec)
+        os.close(slave)
+        return master, process
+
+    def read_pty_until(self, master, marker, timeout=5.0):
+        buf = b''
+        deadline = time.monotonic() + timeout
+        encoded = marker.encode('utf-8')
+        while time.monotonic() < deadline:
+            if select.select([master], [], [], 0.05)[0]:
+                try:
+                    chunk = os.read(master, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                buf += chunk
+                if encoded in buf:
+                    # Drain any trailing bytes of the same frame.
+                    while select.select([master], [], [], 0.03)[0]:
+                        try:
+                            more = os.read(master, 65536)
+                        except OSError:
+                            break
+                        if not more:
+                            break
+                        buf += more
+                    break
+        return buf
+
+    @staticmethod
+    def strip_ansi(text):
+        return re.sub(r'\x1b\[[0-9;?]*[A-Za-z]', '', text)
+
+    def add_extra_skills(self, count=10):
+        for index in range(count):
+            folder = self.repo / 'Coding' / f'extra-skill-{index:02d}'
+            folder.mkdir(parents=True)
+            (folder / 'SKILL.md').write_text('fixture\n')
+
+    def test_terminal_resize_expands_and_shrinks_content(self):
+        if options.powershell:
+            self.skipTest('Bash TUI resize behavior only')
+        self.add_extra_skills(10)
+        # 1 AGENTS.md + 3 categories (Coding, Tools/Downloader, Tools/LLM) + 13 skills = 17 rows
+        master, process = self.spawn_pty_with_ctty('install', ['codex'], self.env, rows=16, cols=55)
+        try:
+            self.read_pty_until(master, 'Select at least one AI tool')
+            os.write(master, b'\n')
+            initial_raw = self.read_pty_until(master, 'Selected items will be linked')
+            initial = self.strip_ansi(initial_raw.decode('utf-8'))
+            match = re.search(r'rows (\d+)-(\d+)', initial)
+            self.assertIsNotNone(match, initial)
+            self.assertEqual(int(match.group(1)), 1)
+            self.assertLess(int(match.group(2)), 17)
+            self.assertIn('AGENTS.md -> ', initial)
+            self.assertIn('...', initial)
+
+            # Scroll down so viewport start > 0.
+            os.write(master, b'j' * 10)
+            scrolled_raw = self.read_pty_until(master, 'extra-skill-08')
+            scrolled_frame = self.strip_ansi(scrolled_raw.decode('utf-8').rsplit('\x1b[H', 1)[-1])
+            match = re.search(r'rows (\d+)-(\d+)', scrolled_frame)
+            self.assertIsNotNone(match, scrolled_frame)
+            self.assertGreater(int(match.group(1)), 1)
+
+            # Expand terminal without pressing any key: viewport pulls start back to 1
+            # and expands both vertically (all 17 rows) and horizontally (full AGENTS.md line).
+            fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', 35, 140, 0, 0))
+            expanded_raw = self.read_pty_until(master, 'rows 1-17')
+            expanded = self.strip_ansi(expanded_raw.decode('utf-8'))
+            self.assertIn('rows 1-17', expanded)
+            self.assertIn('(replaces file)  (Not installed)', expanded)
+            self.assertIn('token-usage', expanded)
+
+            # Shrink terminal without pressing any key: viewport shrinks and keeps cursor visible.
+            fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', 14, 48, 0, 0))
+            shrunk_raw = self.read_pty_until(master, 'Selected items will be linked')
+            shrunk = self.strip_ansi(shrunk_raw.decode('utf-8'))
+            match = re.search(r'rows (\d+)-(\d+)', shrunk)
+            self.assertIsNotNone(match, shrunk)
+            visible_rows = int(match.group(2)) - int(match.group(1)) + 1
+            self.assertLess(visible_rows, 17)
+            self.assertIn('extra-skill-08', shrunk)
+
+            # Keys (including arrow keys) continue working after resizes.
+            os.write(master, b'\x1b[B \n')
+            self.assertEqual(process.wait(timeout=5), 0)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            os.close(master)
+        self.assertTrue((self.links / 'extra-skill-09').is_symlink())
+
+    def test_zero_pty_size_falls_back_to_default_viewport(self):
+        if options.powershell:
+            self.skipTest('Bash TUI resize behavior only')
+        self.add_extra_skills(10)
+        master, process = self.spawn_pty_with_ctty('install', ['codex'], self.env)
+        try:
+            self.read_pty_until(master, 'Select at least one AI tool')
+            os.write(master, b'\n')
+            raw = self.read_pty_until(master, 'Selected items will be linked')
+            screen = self.strip_ansi(raw.decode('utf-8'))
+            match = re.search(r'rows (\d+)-(\d+)', screen)
+            self.assertIsNotNone(match, screen)
+            self.assertEqual(int(match.group(1)), 1)
+            self.assertGreater(int(match.group(2)), 10)
+            os.write(master, b'q')
+            self.assertEqual(process.wait(timeout=5), 0)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            os.close(master)
+
+    def test_chinese_utf8_narrow_and_wide_resize(self):
+        if options.powershell:
+            self.skipTest('Bash TUI resize behavior only')
+        self.add_extra_skills(10)
+        zh_env = dict(self.env)
+        zh_env.pop('LC_ALL', None)
+        zh_env['LC_CTYPE'] = 'C.UTF-8'
+        zh_env['LC_MESSAGES'] = 'zh_CN.UTF-8'
+        master, process = self.spawn_pty_with_ctty('install', ['codex'], zh_env, rows=16, cols=52)
+        try:
+            self.read_pty_until(master, '至少勾选一个 AI 工具')
+            os.write(master, b'\n')
+            narrow_raw = self.read_pty_until(master, '勾选项会创建链接')
+            narrow = self.strip_ansi(narrow_raw.decode('utf-8', errors='strict'))
+            self.assertIn('AGENTS.md -> ', narrow)
+            self.assertIn('...', narrow)
+
+            fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', 35, 140, 0, 0))
+            wide_raw = self.read_pty_until(master, '显示 1-17')
+            wide = self.strip_ansi(wide_raw.decode('utf-8', errors='strict'))
+            self.assertIn('显示 1-17', wide)
+            self.assertIn('（覆盖现有文件）  (未安装)', wide)
+
+            os.write(master, b'q')
+            self.assertEqual(process.wait(timeout=5), 0)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            os.close(master)
 
 
 if __name__ == '__main__':
