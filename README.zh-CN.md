@@ -13,6 +13,7 @@
 - [code-simplifier](Coding/code-simplifier/)：保持行为不变，简化代码。
 - [coding-project-standards](Coding/coding-project-standards/)：在项目级 `AGENTS.md` 中维护 AI 实验与大文件存储规范。
 - [git-version-workflow](Coding/git-version-workflow/)：应用版本号提交、squash、rebase、校验与推送规范。
+- [polish-ui](Coding/polish-ui/)：在不破坏现有功能的前提下优化和去 AI 味处理高信息密度 Web 控制台、仪表盘与开发者工具界面。
 - [python-docstring-standard](Coding/python-docstring-standard/)：规范 Python 脚本头、类与函数文档字符串。
 
 ### Tools

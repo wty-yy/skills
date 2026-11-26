@@ -13,6 +13,7 @@ Categories follow `<category>/<skill>/SKILL.md`; the installers discover them au
 - [code-simplifier](Coding/code-simplifier/): simplify code without changing behavior.
 - [coding-project-standards](Coding/coding-project-standards/): maintain project-level `AGENTS.md` rules for AI experiments and bulk data storage.
 - [git-version-workflow](Coding/git-version-workflow/): apply versioned commit, squash, rebase, verification, and push conventions.
+- [polish-ui](Coding/polish-ui/): refine and de-slop information-dense web consoles, dashboards, and developer tools without functional regression.
 - [python-docstring-standard](Coding/python-docstring-standard/): standardize Python script headers, class docstrings, and function docstrings.
 
 ### Tools
