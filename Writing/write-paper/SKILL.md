@@ -55,3 +55,10 @@ Academic integrity always outranks stylistic smoothing when two rules pull in op
 - **Protect LaTeX, quantitative ranges, and technical terms**: Never alter hyphens or double-hyphens inside LaTeX numeric ranges (`10--25`), math expressions (`$x - y$`), `\cite{}`/`\ref{}` keys, URLs, or pre-noun compound modifiers (`high-dimensional space`). Keep literal technical terms such as `gating network` or `robust optimization` while cutting figurative fluff.
 - **Balance active and passive voice by section**: Prefer active voice (`We evaluate`, `Our method reduces`) when naming the actor clarifies contributions or results, but preserve idiomatic passive voice in Methods (`Samples were centrifuged at 3,000 rpm`) when the procedure or material is the natural subject. Eliminate empty impersonal passives (`It can be seen that`).
 - **Do not over-trigger on weak single signals**: Act on staging patterns and chat leftovers on a single sighting, but leave isolated qualifiers, legitimate three-part domain taxonomies (for example, `precision, recall, and F1`), quoted material, and proper titles alone unless multiple AI tells cluster in the passage.
+
+## Credits
+
+This skill synthesizes and adapts ideas from:
+
+- [HKUSTDial/Supervisor-Skills (`paper-polish`)](https://github.com/HKUSTDial/Supervisor-Skills/tree/main/skills/paper-polish) — meaning-preserving academic editing, claim calibration, Chinese-to-English academic rewriting, and section conventions.
+- [blader/humanizer](https://github.com/blader/humanizer) — structural and lexical AI-tell taxonomy and two-pass de-AI editing workflow.
