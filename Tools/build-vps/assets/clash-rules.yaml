@@ -41,6 +41,18 @@ rule-providers:
     url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/cn.mrs
 
 rules:
+  - PROCESS-NAME,wechat,DIRECT
+  - PROCESS-NAME,WeChat,DIRECT
+  - PROCESS-NAME,WeChat.exe,DIRECT
+  - PROCESS-NAME,Weixin.exe,DIRECT
+  - PROCESS-NAME,WeChatAppEx,DIRECT
+  - PROCESS-NAME,WeChatAppEx.exe,DIRECT
+  - DOMAIN-SUFFIX,weixin.qq.com,DIRECT
+  - DOMAIN-SUFFIX,wechat.com,DIRECT
+  - DOMAIN-SUFFIX,qpic.cn,DIRECT
+  - DOMAIN-SUFFIX,qlogo.cn,DIRECT
+  - IP-ASN,132203,DIRECT,no-resolve
+  - IP-ASN,139341,DIRECT,no-resolve
   - RULE-SET,private-domain,DIRECT
   - RULE-SET,private-address,DIRECT,no-resolve
   - RULE-SET,domestic-domain,DIRECT

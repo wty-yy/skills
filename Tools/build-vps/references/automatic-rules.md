@@ -10,11 +10,20 @@ the populated node definitions and the `PROXY` selection group from the client
 template. Confirm URLs and file availability when using the skill.
 
 The fragment implements this ordered policy:
-1. Private domains and private networks go direct.
-2. Chinese domains go direct.
-3. Known non-Chinese domains use `PROXY`.
-4. Other Chinese destination addresses go direct.
-5. Unmatched traffic uses `PROXY`.
+1. WeChat traffic goes direct via cross-platform `PROCESS-NAME` rules (Linux,
+   macOS, and Windows including `Weixin.exe` and `WeChatAppEx`), WeChat domains,
+   and Tencent CDN `IP-ASN` fallbacks (`132203`, `139341`, `no-resolve`).
+2. Private domains and private networks go direct.
+3. Chinese domains go direct.
+4. Known non-Chinese domains use `PROXY`.
+5. Other Chinese destination addresses go direct.
+6. Unmatched traffic uses `PROXY`.
+
+Domain rules alone do not catch WeChat image uploads/downloads that connect to
+bare Tencent IPs, so keep the `PROCESS-NAME` and `IP-ASN` rules ahead of broad
+regional rules. `IP-ASN` requires `ASN.mmdb` in the Mihomo home directory
+(bundled by default in Clash Verge Rev); omit the `IP-ASN` lines only if a
+target client lacks `ASN.mmdb` support.
 
 Rules are first-match wins. Keep explicit user overrides before broad regional
 rules. This baseline does not claim a separate classification for every service.
@@ -56,6 +65,10 @@ rule set or a temporary `MATCH` configuration as a successful split-routing test
 
 For an existing subscription, back up and update the served profile atomically,
 and update its generator so future regeneration preserves the rule providers.
+When a deployment serves Clash profiles directly from 3x-ui's `subClashRules`
+setting in `x-ui.db`, back up the database with SQLite's online backup API and
+apply via the panel API or restart `x-ui` after updating the database, because
+3x-ui caches `subClashRules` in memory.
 Fetch the public URL and inspect the returned configuration; a changed local
 template alone is not evidence that a subscribed client receives the new rules.
 Verify an empty-cache core can download providers through the configured node.
