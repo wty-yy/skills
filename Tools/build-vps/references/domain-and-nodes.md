@@ -67,6 +67,28 @@ that node's assigned IPv6. Bind traffic to the intended outbound through its
 unique `inboundTag` (or authenticated client identity for a shared listener).
 Preserve existing API, private-address blocking, and other unrelated rules.
 
+When all supported Cloudflare HTTPS ports are already occupied by panel,
+subscription, or other services, add new IPv6 nodes as additional clients (with
+distinct UUID and `email`) on an existing VMess/VLESS listener and route them
+by `user: ["<EMAIL>"]` ahead of or alongside per-inbound rules. On 3x-ui v3,
+observe these operational details when sharing a listener:
+- Use `inbounds/update/<id>` (updating `settings.clients`) rather than
+  `clients/add` when the new client must share an existing `subId`, because
+  `clients/add` rejects duplicate `subId` values.
+- Keep `totalGB: 0` and `enable: true` for clients sharing a provider-wide
+  quota, and verify `enable` after any update; calling `clients/update` on a
+  record with a small integer `totalGB` can evaluate it in bytes and auto-disable
+  the client once usage exceeds that byte count.
+- For 3x-ui native Clash subscriptions serving multiple clients from one
+  inbound, set both `remarkTemplate={{EMAIL}}` and
+  `subShowIdentityOnAllLinks=true` (and align existing client emails with their
+  intended proxy names); otherwise secondary clients fall back to deduplicated
+  inbound names such as `<inbound>-2`. Restart `x-ui` to reload cached
+  subscription settings.
+- If the active SSH session may transit the VPS being restarted, schedule the
+  restart with `systemd-run --on-active=1s systemctl restart x-ui` so the remote
+  command exits cleanly before the proxy briefly drops.
+
 Use this routing order after existing safety rules:
 
 1. For each managed inbound, match destination `ip: ["::/0"]` and select its

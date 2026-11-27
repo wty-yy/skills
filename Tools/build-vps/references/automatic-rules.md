@@ -50,6 +50,16 @@ Do not send the private node subscription URL to a public subscription converter
 to obtain these rules. They can be merged locally or generated directly by the
 subscription service's configuration workflow.
 
+Keep client-specific TUN overrides out of shared remote subscriptions. For
+example, do not put `tun:` blocks such as Windows PPPoE/dial-up `/1` route
+takeovers (`tun.route-address: [0.0.0.0/1, 128.0.0.0/1, "::/1", "8000::/1"]`)
+into the served profile. Clash Verge Rev manages its own `tun:` and
+`profile.store-selected` fields at runtime, and injecting global `/1` TUN routes
+into a multi-user or cross-platform subscription can conflict with local TUN
+toggles, LAN/WSL2/Docker routes, or IPv6-disabled hosts. Apply such workarounds
+only in the affected Windows client's local Profile Enhancement Merge template
+(or enable Clash Verge's built-in `strict-route` setting).
+
 Verify the complete profile with the user's actual core, initial provider
 downloads, and representative private, domestic, foreign, and fallback routing.
 Keep provider refresh distinct from full-subscription refresh and quota updates.
